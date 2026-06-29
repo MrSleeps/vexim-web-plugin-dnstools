@@ -37,6 +37,7 @@ class DomainsTable
                     ->sortable(),
                     
                 IconColumn::make('dkim.enabled')
+                    ->alignCenter()
                     ->label('DKIM')
                     ->boolean()
                     ->trueIcon('heroicon-o-key')

@@ -7,7 +7,7 @@ use VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService;
 
 class CheckDmarcRecords extends Command
 {
-    protected $signature = 'dmarc:check 
+    protected $signature = 'vw:dmarc-check 
                             {--domain= : Check a specific domain} 
                             {--all : Check all domains}
                             {--stats : Show DMARC statistics}';
