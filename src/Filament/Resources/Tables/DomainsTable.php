@@ -52,6 +52,45 @@ class DomainsTable
                             return "No DKIM keys configured";
                         }
                     }),
+                
+IconColumn::make('dmarc_status')
+    ->label('DMARC')
+    ->getStateUsing(function ($record): string {
+        $dmarc = $record->dmarcCheck;
+        
+        if (!$dmarc) {
+            return 'not_checked';
+        }
+        
+        return $dmarc->valid ? 'valid' : 'invalid';
+    })
+    ->icon(function ($state): string {
+        return match($state) {
+            'valid' => 'heroicon-o-shield-check',
+            'invalid' => 'heroicon-o-exclamation-triangle',
+            'not_checked' => 'heroicon-o-clock', // or 'heroicon-o-question-mark-circle'
+        };
+    })
+    ->color(function ($state): string {
+        return match($state) {
+            'valid' => 'success',
+            'invalid' => 'danger',
+            'not_checked' => 'gray',
+        };
+    })
+    ->tooltip(function ($record): string {
+        $dmarc = $record->dmarcCheck;
+        
+        if (!$dmarc) {
+            return 'DMARC not checked yet';
+        }
+        
+        if ($dmarc->valid) {
+            return "DMARC valid (Policy: {$dmarc->getPolicyLabel()})";
+        }
+        
+        return "DMARC invalid: {$dmarc->error_message}";
+    }),                
 
                 IconColumn::make('dmarccheck.valid')
                     ->label('DMARC')
