@@ -75,7 +75,7 @@ IconColumn::make('dmarc_status')
         return match($state) {
             'valid' => 'success',
             'invalid' => 'danger',
-            'not_checked' => 'yellow',
+            'not_checked' => 'warning',
         };
     })
     ->tooltip(function ($record): string {
