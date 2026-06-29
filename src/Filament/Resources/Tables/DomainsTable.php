@@ -53,65 +53,45 @@ class DomainsTable
                         }
                     }),
                 
-IconColumn::make('dmarc_status')
-    ->label('DMARC')
-    ->getStateUsing(function ($record): string {
-        $dmarc = $record->dmarcCheck;
-        
-        if (!$dmarc) {
-            return 'not_checked';
-        }
-        
-        return $dmarc->valid ? 'valid' : 'invalid';
-    })
-    ->icon(function ($state): string {
-        return match($state) {
-            'valid' => 'heroicon-o-shield-check',
-            'invalid' => 'heroicon-o-exclamation-triangle',
-            'not_checked' => 'heroicon-o-exclamation-triangle', // or 'heroicon-o-question-mark-circle'
-        };
-    })
-    ->color(function ($state): string {
-        return match($state) {
-            'valid' => 'success',
-            'invalid' => 'danger',
-            'not_checked' => 'warning',
-        };
-    })
-    ->tooltip(function ($record): string {
-        $dmarc = $record->dmarcCheck;
-        
-        if (!$dmarc) {
-            return 'DMARC not checked yet';
-        }
-        
-        if ($dmarc->valid) {
-            return "DMARC valid (Policy: {$dmarc->getPolicyLabel()})";
-        }
-        
-        return "DMARC invalid: {$dmarc->error_message}";
-    }),                
+                    IconColumn::make('dmarc_status')
+                        ->label('DMARC')
+                        ->alignCenter()
+                        ->getStateUsing(function ($record): string {
+                            $dmarc = $record->dmarcCheck;
 
-                IconColumn::make('dmarccheck.valid')
-                    ->label('DMARC')
-                    ->boolean()
-                    ->trueIcon('heroicon-o-shield-check')
-                    ->falseIcon('heroicon-o-exclamation-triangle')
-                    ->trueColor('success')
-                    ->falseColor('danger')
-                    ->tooltip(function ($record): string {
-                        $dmarc = $record->dmarcCheck;
-                        
-                        if (!$dmarc || $dmarc == NULL) {
-                            return 'DMARC not checked yet';
-                        }
-                        
-                        if ($dmarc->valid) {
-                            return "DMARC valid (Policy: {$dmarc->getPolicyLabel()})";
-                        } else {
+                            if (!$dmarc) {
+                                return 'not_checked';
+                            }
+
+                            return $dmarc->valid ? 'valid' : 'invalid';
+                        })
+                        ->icon(function ($state): string {
+                            return match($state) {
+                                'valid' => 'heroicon-o-shield-check',
+                                'invalid' => 'heroicon-o-exclamation-triangle',
+                                'not_checked' => 'heroicon-o-exclamation-triangle', // or 'heroicon-o-question-mark-circle'
+                            };
+                        })
+                        ->color(function ($state): string {
+                            return match($state) {
+                                'valid' => 'success',
+                                'invalid' => 'danger',
+                                'not_checked' => 'warning',
+                            };
+                        })
+                        ->tooltip(function ($record): string {
+                            $dmarc = $record->dmarcCheck;
+
+                            if (!$dmarc) {
+                                return 'DMARC not checked yet';
+                            }
+
+                            if ($dmarc->valid) {
+                                return "DMARC valid (Policy: {$dmarc->getPolicyLabel()})";
+                            }
+
                             return "DMARC invalid: {$dmarc->error_message}";
-                        }
-                    }),
+                        }),
             ])
             ->filters([
                 SelectFilter::make('enabled')
