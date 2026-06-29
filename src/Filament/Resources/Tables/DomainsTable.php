@@ -20,6 +20,8 @@ use Filament\Support\Icons\Heroicon;
 use VEximweb\Plugin\DnsTools\Models\DmarcCheck;
 use Filament\Notifications\Notification;
 use Filament\Actions\ActionGroup;
+use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Modals\GenerateDmarcForm;
+use VEximweb\Core\Data\Repositories\Interfaces\SettingRepositoryInterface;
 
 class DomainsTable
 {
@@ -209,6 +211,27 @@ class DomainsTable
                     EditAction::make(),
                     EditAction::make(),
                     EditAction::make(),
+Action::make('dmarc')
+    ->fillForm(fn (SettingRepositoryInterface $settings) =>
+        GenerateDmarcForm::values($settings)
+    )
+    ->form(fn ($record) =>
+        GenerateDmarcForm::schema($record->domain)
+    )
+    ->action(fn (array $data, SettingRepositoryInterface $settings, $record) =>
+        GenerateDmarcForm::save($settings, $data, $record->domain)
+    ),                    
+                    
+                    /*
+                    Action::make('dmarc')
+                        ->fillForm(fn (SettingRepositoryInterface $settings) =>
+                            GenerateDmarcForm::values($settings)
+                        )
+                        ->form(GenerateDmarcForm::schema())
+                        ->action(fn (array $data, SettingRepositoryInterface $settings) =>
+                            GenerateDmarcForm::save($settings, $data)
+                        ),  
+                    */
                     Action::make('viewDmarc')
                         ->label('DMARC Details')
                         ->modalHeading('DMARC Record Details')
