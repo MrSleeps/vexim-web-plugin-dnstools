@@ -68,14 +68,14 @@ IconColumn::make('dmarc_status')
         return match($state) {
             'valid' => 'heroicon-o-shield-check',
             'invalid' => 'heroicon-o-exclamation-triangle',
-            'not_checked' => 'heroicon-o-clock', // or 'heroicon-o-question-mark-circle'
+            'not_checked' => 'heroicon-o-exclamation-triangle', // or 'heroicon-o-question-mark-circle'
         };
     })
     ->color(function ($state): string {
         return match($state) {
             'valid' => 'success',
             'invalid' => 'danger',
-            'not_checked' => 'gray',
+            'not_checked' => 'yellow',
         };
     })
     ->tooltip(function ($record): string {
