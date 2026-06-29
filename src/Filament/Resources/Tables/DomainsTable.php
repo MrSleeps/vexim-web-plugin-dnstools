@@ -63,7 +63,7 @@ class DomainsTable
                     ->tooltip(function ($record): string {
                         $dmarc = $record->dmarcCheck;
                         
-                        if (!$dmarc) {
+                        if (!$dmarc || $dmarc == NULL) {
                             return 'DMARC not checked yet';
                         }
                         
