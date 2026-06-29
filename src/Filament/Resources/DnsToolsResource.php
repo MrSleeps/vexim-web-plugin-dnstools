@@ -1,0 +1,180 @@
+<?php
+
+namespace VEximweb\Plugin\DnsTools\Filament\Resources;
+
+//use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Pages\CreateDomain;
+//use VEximweb\Core\Domain\Filament\Resources\Pages\EditDomain;
+use VEximweb\Plugin\DnsTools\Filament\Resources\Pages\ListDomains;
+use VEximweb\Core\Domain\Filament\Resources\Schemas\DomainForm;
+use VEximweb\Plugin\DnsTools\Filament\Resources\Tables\DomainsTable;
+use VEximweb\Plugin\DnsTools\Models\SystemDomains as Domain;
+use BackedEnum;
+use Filament\Resources\Resource;
+use Filament\Schemas\Schema;
+use Filament\Support\Icons\Heroicon;
+use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+
+class DnsToolsResource extends Resource
+{
+    protected static ?string $model = Domain::class;
+    
+    protected static ?string $slug = 'dnstools/domains';
+
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+
+    protected static ?string $recordTitleAttribute = 'domain';
+    
+    protected static string|\UnitEnum|null $navigationGroup = 'DNS Tools';
+    
+    protected static ?string $navigationLabel = 'DNS Tools';
+    
+    protected static ?int $navigationSort = 1;
+
+    
+    public static function form(Schema $schema): Schema
+    {
+        // Get the base form
+        $schema = DomainForm::configure($schema);
+        
+        // Check if DNS Core is installed and try to get extensions
+        if (class_exists(\VEximweb\Plugin\DnsCore\Services\DnsProviderDiscoveryService::class)) {
+            try {
+                $discoveryService = app(\VEximweb\Plugin\DnsCore\Services\DnsProviderDiscoveryService::class);
+                
+                // Make sure the discovery service is booted
+                if (method_exists($discoveryService, 'boot')) {
+                    $discoveryService->boot();
+                }
+                
+                $extensions = $discoveryService->getFormExtensions();
+                
+                if (!empty($extensions)) {
+                    $extensionComponents = [];
+                    
+                    foreach ($extensions as $extension) {
+                        if (isset($extension['components']) && is_callable($extension['components'])) {
+                            $components = $extension['components']();
+                            if (is_array($components)) {
+                                $extensionComponents = array_merge($extensionComponents, $components);
+                            }
+                        }
+                    }
+                    
+                    if (!empty($extensionComponents)) {
+                        \Log::debug('Injecting DNS form extensions', [
+                            'component_count' => count($extensionComponents),
+                            'extension_count' => count($extensions),
+                        ]);
+                        
+                        $schema = $schema->components([
+                            ...$schema->getComponents(),
+                            ...$extensionComponents,
+                        ]);
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::debug('Could not load DNS form extensions: ' . $e->getMessage());
+            }
+        }
+        
+        return $schema;
+    }    
+    
+    public static function form_old(Schema $schema): Schema
+    {
+        return DomainForm::configure($schema);
+    }
+
+    public static function table(Table $table): Table
+    {
+        return DomainsTable::configure($table);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            //
+        ];
+    }
+    
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+        $user = auth()->user();
+        
+        // If no user is logged in, return empty query
+        if (!$user) {
+            return $query->whereRaw('1 = 0');
+        }
+        
+        // System admins can see all domains
+        if ($user->isSystemAdmin()) {
+            return $query;
+        }
+        
+        // Domain admins only see domains they're assigned to
+        if ($user->isDomainAdmin()) {
+            return $query->whereHas('administrators', function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->where('role', 'domain_admin');
+            });
+        }
+        
+        // Domain users shouldn't see any domains
+        return $query->whereRaw('1 = 0');
+    }
+    
+
+    
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'primary';
+    }
+    
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        $user = auth()->user();
+        
+        if (!$user) {
+            return null;
+        }
+        
+        if ($user->isSystemAdmin()) {
+            return 'Total number of domains in the system';
+        }
+        
+        if ($user->isDomainAdmin()) {
+            return 'Total number of domains you administer';
+        }
+        
+        return null;
+    }
+    
+    // Hide navigation item for domain-users
+    public static function shouldRegisterNavigation(): bool
+    {
+        $user = auth()->user();
+        
+        // Hide for domain-user
+        if (!$user || $user->isDomainUser()) {
+            return false;
+        }
+        
+        return true;
+    }
+
+    public static function getPages(): array
+    {
+        return [
+            'index' => ListDomains::route('/'),
+            //'create' => CreateDomain::route('/create'),
+            //'edit' => EditDomain::route('/{record}/edit'),
+        ];
+    }
+    
+    public static function getGloballySearchableAttributes(): array
+    {
+        return ['domain'];
+    }    
+}
