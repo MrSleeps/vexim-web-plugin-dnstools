@@ -22,6 +22,8 @@ use Filament\Notifications\Notification;
 use Filament\Actions\ActionGroup;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Modals\GenerateDmarcForm;
 use VEximweb\Core\Data\Repositories\Interfaces\SettingRepositoryInterface;
+use VEximweb\Plugin\DnsTools\Filament\Resources\DnsToolsResource;
+
 
 class DomainsTable
 {
@@ -208,9 +210,25 @@ class DomainsTable
                     
                 //EditAction::make(),
                 ActionGroup::make([
+Action::make('generateDmarc')
+    ->label('Generate DMARC')
+    ->icon('heroicon-o-document-text')
+    ->url(fn ($record) => DnsToolsResource::getUrl('generate', ['domain' => $record])),                    
                     EditAction::make(),
                     EditAction::make(),
                     EditAction::make(),
+                    
+Action::make('dmarc')
+    ->fillForm(fn (SettingRepositoryInterface $settings, $record) =>
+        GenerateDmarcForm::values($settings, $record)  // Pass the record
+    )
+    ->form(fn ($record) =>
+        GenerateDmarcForm::schema($record)  // Pass the full record, not just domain string
+    )
+    ->action(fn (array $data, SettingRepositoryInterface $settings, $record) =>
+        GenerateDmarcForm::save($settings, $data, $record)  // Pass the record
+    ),                    
+/*                    
 Action::make('dmarc')
     ->fillForm(fn (SettingRepositoryInterface $settings) =>
         GenerateDmarcForm::values($settings)
@@ -222,7 +240,7 @@ Action::make('dmarc')
         GenerateDmarcForm::save($settings, $data, $record->domain)
     ),                    
                     
-                    /*
+  */                  /*
                     Action::make('dmarc')
                         ->fillForm(fn (SettingRepositoryInterface $settings) =>
                             GenerateDmarcForm::values($settings)

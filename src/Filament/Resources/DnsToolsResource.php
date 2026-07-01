@@ -14,18 +14,19 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Pages\GenerateDmarcPage;
 
 class DnsToolsResource extends Resource
 {
     protected static ?string $model = Domain::class;
     
-    protected static ?string $slug = 'dnstools/domains';
+    protected static ?string $slug = 'dnstools';
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
+    protected static string|BackedEnum|null $navigationIcon = Heroicon::WrenchScrewdriver;
 
     protected static ?string $recordTitleAttribute = 'domain';
     
-    protected static string|\UnitEnum|null $navigationGroup = 'DNS Tools';
+    protected static string|\UnitEnum|null $navigationGroup = 'DNS';
     
     protected static ?string $navigationLabel = 'DNS Tools';
     
@@ -81,10 +82,6 @@ class DnsToolsResource extends Resource
         return $schema;
     }    
     
-    public static function form_old(Schema $schema): Schema
-    {
-        return DomainForm::configure($schema);
-    }
 
     public static function table(Table $table): Table
     {
@@ -168,6 +165,8 @@ class DnsToolsResource extends Resource
     {
         return [
             'index' => ListDomains::route('/'),
+            //'dmarc' => GenerateDmarcPage::route('/dmarc'),
+            'generate' => GenerateDmarcPage::route('/{domain}/generate-dmarc'),
             //'create' => CreateDomain::route('/create'),
             //'edit' => EditDomain::route('/{record}/edit'),
         ];
