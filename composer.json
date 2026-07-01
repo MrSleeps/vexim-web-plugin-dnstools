@@ -19,7 +19,8 @@
     ],
     "require": {
         "php": "^8.4",
-        "filament/filament": "^5.0"
+        "filament/filament": "^5.0",
+        "cbowofrivia/dmarc-record-builder": "^4.0"
     },
     "autoload": {
         "psr-4": {
@@ -42,7 +43,6 @@
         "larastan/larastan": "^3.0",
         "laravel/pint": "^1.0",
         "nunomaduro/collision": "^8.0",
-        "cbowofrivia/dmarc-record-builder": "^4.0",
         "orchestra/testbench": "^11.0",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-arch": "^4.0",
