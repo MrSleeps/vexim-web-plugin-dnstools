@@ -213,7 +213,11 @@ class DomainsTable
 Action::make('generateDmarc')
     ->label('Generate DMARC')
     ->icon('heroicon-o-document-text')
-    ->url(fn ($record) => DnsToolsResource::getUrl('generate', ['domain' => $record])),                    
+    ->url(fn ($record) => DnsToolsResource::getUrl('generateDmarc', ['domain' => $record])),      
+Action::make('generateSpf')
+    ->label('Generate SPF')
+    ->icon('heroicon-o-document-text')
+    ->url(fn ($record) => DnsToolsResource::getUrl('generateSpf', ['domain' => $record])),      
                     EditAction::make(),
                     EditAction::make(),
                     EditAction::make(),

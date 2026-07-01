@@ -15,6 +15,7 @@ use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Pages\GenerateDmarcPage;
+use VEximweb\Plugin\DnsTools\Filament\Resources\Spf\Pages\GenerateSpfPage;
 
 class DnsToolsResource extends Resource
 {
@@ -166,7 +167,8 @@ class DnsToolsResource extends Resource
         return [
             'index' => ListDomains::route('/'),
             //'dmarc' => GenerateDmarcPage::route('/dmarc'),
-            'generate' => GenerateDmarcPage::route('/{domain}/generate-dmarc'),
+            'generateDmarc' => GenerateDmarcPage::route('/{domain}/generate-dmarc'),
+            'generateSpf' => GenerateSpfPage::route('/{domain}/generate-spf'),
             //'create' => CreateDomain::route('/create'),
             //'edit' => EditDomain::route('/{record}/edit'),
         ];
