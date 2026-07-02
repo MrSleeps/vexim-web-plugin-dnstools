@@ -9,6 +9,9 @@ use SPFLib\SemanticValidator;
 use SPFLib\Exception\InvalidTermException;
 use VEximweb\Plugin\DnsTools\Models\SystemDomains as Domain;
 use Illuminate\Support\Facades\Log;
+use IPLib\Factory;
+use IPLib\Address\IPv4;
+use IPLib\Address\IPv6;
 
 class SpfRecordService
 {
@@ -24,9 +27,6 @@ class SpfRecordService
         try {
             // Initialize the SPF record with the domain
             $record = new Record($domain->domain);
-            
-            // Add the version mechanism (v=spf1)
-            $record->addTerm(new Mechanism\VersionMechanism());
             
             // 1. Add Include mechanisms (sending services)
             if (!empty($data['spf_includes'])) {
@@ -46,12 +46,17 @@ class SpfRecordService
             if (!empty($data['spf_ipv4'])) {
                 foreach ($data['spf_ipv4'] as $ipv4) {
                     if (!empty($ipv4['ipv4'])) {
-                        $record->addTerm(
-                            new Mechanism\Ip4Mechanism(
-                                Mechanism::QUALIFIER_PASS,
-                                $ipv4['ipv4']
-                            )
-                        );
+                        $ip = $this->parseIpAddress($ipv4['ipv4']);
+                        if ($ip instanceof IPv4) {
+                            $record->addTerm(
+                                new Mechanism\Ip4Mechanism(
+                                    Mechanism::QUALIFIER_PASS,
+                                    $ip
+                                )
+                            );
+                        } else {
+                            Log::warning('Invalid IPv4 address: ' . $ipv4['ipv4']);
+                        }
                     }
                 }
             }
@@ -60,12 +65,17 @@ class SpfRecordService
             if (!empty($data['spf_ipv6'])) {
                 foreach ($data['spf_ipv6'] as $ipv6) {
                     if (!empty($ipv6['ipv6'])) {
-                        $record->addTerm(
-                            new Mechanism\Ip6Mechanism(
-                                Mechanism::QUALIFIER_PASS,
-                                $ipv6['ipv6']
-                            )
-                        );
+                        $ip = $this->parseIpAddress($ipv6['ipv6']);
+                        if ($ip instanceof IPv6) {
+                            $record->addTerm(
+                                new Mechanism\Ip6Mechanism(
+                                    Mechanism::QUALIFIER_PASS,
+                                    $ip
+                                )
+                            );
+                        } else {
+                            Log::warning('Invalid IPv6 address: ' . $ipv6['ipv6']);
+                        }
                     }
                 }
             }
@@ -73,7 +83,6 @@ class SpfRecordService
             // 4. Add MX mechanism
             if (!empty($data['spf_use_mx'])) {
                 if (!empty($data['spf_mx_domain'])) {
-                    // Custom MX domain
                     $record->addTerm(
                         new Mechanism\MxMechanism(
                             Mechanism::QUALIFIER_PASS,
@@ -81,7 +90,6 @@ class SpfRecordService
                         )
                     );
                 } else {
-                    // Use current domain's MX records
                     $record->addTerm(
                         new Mechanism\MxMechanism(
                             Mechanism::QUALIFIER_PASS
@@ -93,7 +101,6 @@ class SpfRecordService
             // 5. Add A mechanism
             if (!empty($data['spf_use_a'])) {
                 if (!empty($data['spf_a_domain'])) {
-                    // Custom A domain
                     $record->addTerm(
                         new Mechanism\AMechanism(
                             Mechanism::QUALIFIER_PASS,
@@ -101,7 +108,6 @@ class SpfRecordService
                         )
                     );
                 } else {
-                    // Use current domain's A record
                     $record->addTerm(
                         new Mechanism\AMechanism(
                             Mechanism::QUALIFIER_PASS
@@ -111,7 +117,6 @@ class SpfRecordService
             }
             
             // 6. Add Advanced mechanisms
-            // PTR (deprecated - use with caution)
             if (!empty($data['spf_ptr']) && $data['spf_ptr'] === 'ptr') {
                 $record->addTerm(
                     new Mechanism\PtrMechanism(
@@ -120,7 +125,6 @@ class SpfRecordService
                 );
             }
             
-            // Exists mechanism
             if (!empty($data['spf_exists'])) {
                 $record->addTerm(
                     new Mechanism\ExistsMechanism(
@@ -130,7 +134,7 @@ class SpfRecordService
                 );
             }
             
-            // 7. Add Redirect modifier (must be added before the ALL mechanism)
+            // 7. Add Redirect modifier
             if (!empty($data['spf_redirect'])) {
                 try {
                     $record->addTerm(
@@ -163,7 +167,6 @@ class SpfRecordService
             $issues = $this->validateRecord($record);
             $lookupCount = $this->countLookups($record);
             
-            // Log any issues
             if (!empty($issues)) {
                 Log::warning('SPF record validation issues:', [
                     'domain' => $domain->domain,
@@ -185,7 +188,7 @@ class SpfRecordService
             ]);
             
             return [
-                'record' => 'v=spf1 -all', // Fallback to a safe default
+                'record' => 'v=spf1 -all',
                 'lookups' => 0,
                 'issues' => ['Error: ' . $e->getMessage()],
                 'is_valid' => false,
@@ -194,13 +197,34 @@ class SpfRecordService
     }
     
     /**
+     * Parse an IP address string with proper CIDR handling
+     *
+     * @param string $ipString
+     * @return IPv4|IPv6|null
+     */
+    protected function parseIpAddress(string $ipString)
+    {
+        // Remove any whitespace
+        $ipString = trim($ipString);
+        
+        try {
+            return Factory::parseAddressString($ipString);
+        } catch (\Exception $e) {
+            Log::warning('Failed to parse IP address: ' . $ipString, ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+    
+    /**
      * Get the qualifier for the ALL mechanism
+     * Must return an integer constant from Mechanism class
      *
      * @param string $policy
      * @return int
      */
-    protected function getQualifier(string $policy): int
+    protected function getQualifier(string $policy): string
     {
+        // Using match expression that returns integer constants
         return match($policy) {
             '-all' => Mechanism::QUALIFIER_FAIL,
             '~all' => Mechanism::QUALIFIER_SOFTFAIL,
@@ -225,7 +249,7 @@ class SpfRecordService
             $formattedIssues = [];
             foreach ($issues as $issue) {
                 $formattedIssues[] = [
-                    'level' => $issue->getLevel(), // 'info', 'warning', 'error'
+                    'level' => $issue->getLevel(),
                     'message' => $issue->getMessage(),
                     'term' => $issue->getTerm() ? (string) $issue->getTerm() : null,
                 ];
@@ -255,7 +279,6 @@ class SpfRecordService
         $terms = $record->getTerms();
         
         foreach ($terms as $term) {
-            // Mechanisms that cause DNS lookups
             if ($term instanceof Mechanism\IncludeMechanism ||
                 $term instanceof Mechanism\MxMechanism ||
                 $term instanceof Mechanism\AMechanism ||
@@ -264,42 +287,12 @@ class SpfRecordService
                 $lookupCount++;
             }
             
-            // Redirect modifier also causes a lookup
             if ($term instanceof Modifier\RedirectModifier) {
                 $lookupCount++;
             }
         }
         
         return $lookupCount;
-    }
-    
-    /**
-     * Test if an IP address is allowed by the SPF record
-     *
-     * @param string $ip
-     * @param string $domain
-     * @param array $data
-     * @return bool
-     */
-    public function testIp(string $ip, string $domain, array $data): bool
-    {
-        try {
-            // Generate the record first
-            $result = $this->generate(new Domain(['domain' => $domain]), $data);
-            
-            // Parse the record
-            $record = Record::fromString($result['record']);
-            
-            // Check if the IP is allowed
-            // Note: This is a simplified check. In production, you'd use a proper SPF checker
-            // that performs actual DNS lookups. The mlocati/spf-lib doesn't have a built-in
-            // checker, so you might want to use a separate package for this.
-            
-            return true; // Placeholder
-        } catch (\Exception $e) {
-            Log::error('Failed to test SPF record: ' . $e->getMessage());
-            return false;
-        }
     }
     
     /**
@@ -322,10 +315,6 @@ class SpfRecordService
             ];
             
             foreach ($terms as $term) {
-                if ($term instanceof Mechanism\VersionMechanism) {
-                    continue;
-                }
-                
                 $termString = (string) $term;
                 
                 if ($term instanceof Mechanism\AllMechanism) {
@@ -342,18 +331,20 @@ class SpfRecordService
                         'description' => 'Include SPF records from ' . $term->getDomain(),
                     ];
                 } elseif ($term instanceof Mechanism\Ip4Mechanism) {
+                    $ip = $term->getIp();
                     $description['mechanisms'][] = [
                         'type' => 'ip4',
                         'value' => $termString,
-                        'ip' => $term->getIp(),
-                        'description' => 'Allow IP ' . $term->getIp(),
+                        'ip' => is_object($ip) ? (string) $ip : $ip,
+                        'description' => 'Allow IP ' . (is_object($ip) ? (string) $ip : $ip),
                     ];
                 } elseif ($term instanceof Mechanism\Ip6Mechanism) {
+                    $ip = $term->getIp();
                     $description['mechanisms'][] = [
                         'type' => 'ip6',
                         'value' => $termString,
-                        'ip' => $term->getIp(),
-                        'description' => 'Allow IP ' . $term->getIp(),
+                        'ip' => is_object($ip) ? (string) $ip : $ip,
+                        'description' => 'Allow IP ' . (is_object($ip) ? (string) $ip : $ip),
                     ];
                 } elseif ($term instanceof Mechanism\MxMechanism) {
                     $description['mechanisms'][] = [
@@ -368,6 +359,19 @@ class SpfRecordService
                         'value' => $termString,
                         'domain' => $term->getDomain() ?? 'current domain',
                         'description' => 'Allow A record for ' . ($term->getDomain() ?? 'this domain'),
+                    ];
+                } elseif ($term instanceof Mechanism\PtrMechanism) {
+                    $description['mechanisms'][] = [
+                        'type' => 'ptr',
+                        'value' => $termString,
+                        'description' => 'PTR mechanism (deprecated)',
+                    ];
+                } elseif ($term instanceof Mechanism\ExistsMechanism) {
+                    $description['mechanisms'][] = [
+                        'type' => 'exists',
+                        'value' => $termString,
+                        'domain' => $term->getDomain(),
+                        'description' => 'Exists mechanism for ' . $term->getDomain(),
                     ];
                 } elseif ($term instanceof Modifier\RedirectModifier) {
                     $description['modifiers'][] = [
@@ -392,7 +396,6 @@ class SpfRecordService
                 }
             }
             
-            // Generate a summary
             $parts = [];
             foreach ($description['mechanisms'] as $mech) {
                 if ($mech['type'] !== 'all') {
@@ -413,27 +416,23 @@ class SpfRecordService
     /**
      * Get a description for a mechanism
      *
-     * @param mixed $mechanism
+     * @param Mechanism\AllMechanism $mechanism
      * @return string
      */
-    protected function getMechanismDescription($mechanism): string
+    protected function getMechanismDescription(Mechanism\AllMechanism $mechanism): string
     {
-        if ($mechanism instanceof Mechanism\AllMechanism) {
-            $qualifier = $mechanism->getQualifier();
-            return match($qualifier) {
-                Mechanism::QUALIFIER_FAIL => 'Reject all other senders (Hard Fail)',
-                Mechanism::QUALIFIER_SOFTFAIL => 'Accept but mark as suspicious (Soft Fail)',
-                Mechanism::QUALIFIER_NEUTRAL => 'Do nothing (Neutral)',
-                Mechanism::QUALIFIER_PASS => 'Allow all senders (DANGEROUS)',
-                default => 'Unknown qualifier',
-            };
-        }
-        return 'SPF mechanism';
+        $qualifier = $mechanism->getQualifier();
+        return match($qualifier) {
+            Mechanism::QUALIFIER_FAIL => 'Reject all other senders (Hard Fail)',
+            Mechanism::QUALIFIER_SOFTFAIL => 'Accept but mark as suspicious (Soft Fail)',
+            Mechanism::QUALIFIER_NEUTRAL => 'Do nothing (Neutral)',
+            Mechanism::QUALIFIER_PASS => 'Allow all senders (DANGEROUS)',
+            default => 'Unknown qualifier',
+        };
     }
     
     /**
      * Flatten a complex SPF record to its simplest form
-     * (Useful for reducing lookups)
      *
      * @param string $recordString
      * @return array
@@ -452,9 +451,11 @@ class SpfRecordService
             
             foreach ($terms as $term) {
                 if ($term instanceof Mechanism\Ip4Mechanism) {
-                    $ip4List[] = $term->getIp();
+                    $ip = $term->getIp();
+                    $ip4List[] = is_object($ip) ? (string) $ip : $ip;
                 } elseif ($term instanceof Mechanism\Ip6Mechanism) {
-                    $ip6List[] = $term->getIp();
+                    $ip = $term->getIp();
+                    $ip6List[] = is_object($ip) ? (string) $ip : $ip;
                 } elseif ($term instanceof Mechanism\IncludeMechanism) {
                     $includes[] = $term->getDomain();
                 } elseif ($term instanceof Mechanism\AllMechanism) {

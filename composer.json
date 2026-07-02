@@ -21,7 +21,8 @@
         "php": "^8.4",
         "filament/filament": "^5.0",
         "cbowofrivia/dmarc-record-builder": "^4.0",
-        "mlocati/spf-lib": "^3.3"
+        "mlocati/spf-lib": "^3.3",
+        "mlocati/ip-lib": "^1.22"
     },
     "autoload": {
         "psr-4": {

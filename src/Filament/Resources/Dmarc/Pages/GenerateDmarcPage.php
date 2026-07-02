@@ -230,16 +230,17 @@ class GenerateDmarcPage extends Page
             'name' => '_dmarc',
             'content' => $this->generatedRecord
         ]);
-
-        event(new \App\Events\DmarcKeyGenerated(
-            zone: $domainName,
-            name: '_dmarc',
-            type: 'TXT',
-            content: $this->generatedRecord,
-            ttl: 3600,
-            operation: 'create'
-        ));
-
+        
+        if($data['update_dns']) {
+            event(new \App\Events\DmarcKeyGenerated(
+                zone: $domainName,
+                name: '_dmarc',
+                type: 'TXT',
+                content: $this->generatedRecord,
+                ttl: 3600,
+                operation: 'create'
+            ));
+        };
         $this->dispatch('open-modal', id: 'dmarc-record-modal');
     }
 

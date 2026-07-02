@@ -301,6 +301,7 @@ class GenerateSpfPage extends Page
     {
         $data = $this->form->getState();
         \Log::debug('SPF Form data:' . json_encode($data));
+        \Log::debug('Update dms state:' . $data['update_dns']);
 
         // Generate the SPF record
         $result = $spf->generate($this->domain, $data);
@@ -313,19 +314,20 @@ class GenerateSpfPage extends Page
         // Log the generated record
         \Log::debug('SPF Event data:', [
             'zone' => $this->dnsName,
-            'name' => '_dmarc',
+            'name' => '',
             'content' => $this->generatedRecord
         ]);
-
-        // Dispatch event
-        event(new \App\Events\SpfKeyGenerated(
-            zone: $this->dnsName,
-            name: '_dmarc',
-            type: 'TXT',
-            content: $this->generatedRecord,
-            ttl: (int) ($data['ttl'] ?? 3600),
-            operation: 'create'
-        ));
+        if($data['update_dns']) {
+            
+            event(new \App\Events\SpfRecordGenerated(
+                zone: $this->dnsName,
+                name: '',
+                type: 'TXT',
+                content: $this->generatedRecord,
+                ttl: (int) ($data['ttl'] ?? 3600),
+                operation: 'create'
+            ));
+        };
 
         // Show the modal with the generated record
         $this->dispatch('open-modal', id: 'spf-record-modal');

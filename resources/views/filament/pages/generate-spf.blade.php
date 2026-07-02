@@ -3,7 +3,7 @@
         {{ $this->form }}
     </form>
 
-    <x-filament::modal id="dmarc-record-modal" width="2xl">
+    <x-filament::modal id="spf-record-modal" width="2xl">
         <x-slot name="heading">
             Generated SPF Record
         </x-slot>
