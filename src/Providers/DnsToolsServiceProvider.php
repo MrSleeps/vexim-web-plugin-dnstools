@@ -80,6 +80,7 @@ class DnsToolsServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 \VEximweb\Plugin\DnsTools\Console\Commands\CheckDmarcRecords::class,
+                \VEximweb\Plugin\DnsTools\Console\Commands\CheckSpfRecords::class,
             ]);
         }        
     }

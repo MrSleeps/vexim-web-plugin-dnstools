@@ -6,15 +6,26 @@ use SPFLib\Record;
 use SPFLib\Term\Mechanism;
 use SPFLib\Term\Modifier;
 use SPFLib\SemanticValidator;
+use SPFLib\Decoder;
+use SPFLib\Exception;
 use SPFLib\Exception\InvalidTermException;
 use VEximweb\Plugin\DnsTools\Models\SystemDomains as Domain;
+use VEximweb\Plugin\DnsTools\Models\SpfCheck;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use IPLib\Factory;
 use IPLib\Address\IPv4;
 use IPLib\Address\IPv6;
 
 class SpfRecordService
 {
+    protected $decoder;
+    
+    public function __construct()
+    {
+        $this->decoder = new Decoder();
+    }
+    
     /**
      * Generate an SPF record from form data
      *
@@ -217,14 +228,12 @@ class SpfRecordService
     
     /**
      * Get the qualifier for the ALL mechanism
-     * Must return an integer constant from Mechanism class
      *
      * @param string $policy
-     * @return int
+     * @return string
      */
     protected function getQualifier(string $policy): string
     {
-        // Using match expression that returns integer constants
         return match($policy) {
             '-all' => Mechanism::QUALIFIER_FAIL,
             '~all' => Mechanism::QUALIFIER_SOFTFAIL,
@@ -304,7 +313,12 @@ class SpfRecordService
     public function describe(string $recordString): array
     {
         try {
-            $record = Record::fromString($recordString);
+            $record = $this->decoder->getRecordFromTXT($recordString);
+            
+            if ($record === null) {
+                return ['error' => 'Not a valid SPF record'];
+            }
+            
             $terms = $record->getTerms();
             
             $description = [
@@ -316,80 +330,87 @@ class SpfRecordService
             
             foreach ($terms as $term) {
                 $termString = (string) $term;
+                $mechanismName = $term->getName();
                 
-                if ($term instanceof Mechanism\AllMechanism) {
+                if ($mechanismName === 'all') {
                     $description['mechanisms'][] = [
                         'type' => 'all',
                         'value' => $termString,
                         'description' => $this->getMechanismDescription($term),
                     ];
-                } elseif ($term instanceof Mechanism\IncludeMechanism) {
+                } elseif ($mechanismName === 'include') {
+                    $domain = $this->getDomainFromMechanism($term, $termString);
                     $description['mechanisms'][] = [
                         'type' => 'include',
                         'value' => $termString,
-                        'domain' => $term->getDomain(),
-                        'description' => 'Include SPF records from ' . $term->getDomain(),
+                        'domain' => $domain,
+                        'description' => 'Include SPF records from ' . $domain,
                     ];
-                } elseif ($term instanceof Mechanism\Ip4Mechanism) {
-                    $ip = $term->getIp();
+                } elseif ($mechanismName === 'ip4') {
+                    $ip = $this->extractDomainFromString($termString);
                     $description['mechanisms'][] = [
                         'type' => 'ip4',
                         'value' => $termString,
-                        'ip' => is_object($ip) ? (string) $ip : $ip,
-                        'description' => 'Allow IP ' . (is_object($ip) ? (string) $ip : $ip),
+                        'ip' => $ip,
+                        'description' => 'Allow IP ' . $ip,
                     ];
-                } elseif ($term instanceof Mechanism\Ip6Mechanism) {
-                    $ip = $term->getIp();
+                } elseif ($mechanismName === 'ip6') {
+                    $ip = $this->extractDomainFromString($termString);
                     $description['mechanisms'][] = [
                         'type' => 'ip6',
                         'value' => $termString,
-                        'ip' => is_object($ip) ? (string) $ip : $ip,
-                        'description' => 'Allow IP ' . (is_object($ip) ? (string) $ip : $ip),
+                        'ip' => $ip,
+                        'description' => 'Allow IP ' . $ip,
                     ];
-                } elseif ($term instanceof Mechanism\MxMechanism) {
+                } elseif ($mechanismName === 'mx') {
+                    $domain = $this->getDomainFromMechanism($term, $termString) ?: 'current domain';
                     $description['mechanisms'][] = [
                         'type' => 'mx',
                         'value' => $termString,
-                        'domain' => $term->getDomain() ?? 'current domain',
-                        'description' => 'Allow MX servers for ' . ($term->getDomain() ?? 'this domain'),
+                        'domain' => $domain,
+                        'description' => 'Allow MX servers for ' . $domain,
                     ];
-                } elseif ($term instanceof Mechanism\AMechanism) {
+                } elseif ($mechanismName === 'a') {
+                    $domain = $this->getDomainFromMechanism($term, $termString) ?: 'current domain';
                     $description['mechanisms'][] = [
                         'type' => 'a',
                         'value' => $termString,
-                        'domain' => $term->getDomain() ?? 'current domain',
-                        'description' => 'Allow A record for ' . ($term->getDomain() ?? 'this domain'),
+                        'domain' => $domain,
+                        'description' => 'Allow A record for ' . $domain,
                     ];
-                } elseif ($term instanceof Mechanism\PtrMechanism) {
+                } elseif ($mechanismName === 'ptr') {
                     $description['mechanisms'][] = [
                         'type' => 'ptr',
                         'value' => $termString,
                         'description' => 'PTR mechanism (deprecated)',
                     ];
-                } elseif ($term instanceof Mechanism\ExistsMechanism) {
+                } elseif ($mechanismName === 'exists') {
+                    $domain = $this->getDomainFromMechanism($term, $termString);
                     $description['mechanisms'][] = [
                         'type' => 'exists',
                         'value' => $termString,
-                        'domain' => $term->getDomain(),
-                        'description' => 'Exists mechanism for ' . $term->getDomain(),
+                        'domain' => $domain,
+                        'description' => 'Exists mechanism for ' . $domain,
                     ];
-                } elseif ($term instanceof Modifier\RedirectModifier) {
+                } elseif ($mechanismName === 'redirect') {
+                    $domain = $this->getDomainFromMechanism($term, $termString);
                     $description['modifiers'][] = [
                         'type' => 'redirect',
                         'value' => $termString,
-                        'domain' => $term->getDomain(),
-                        'description' => 'Redirect to ' . $term->getDomain(),
+                        'domain' => $domain,
+                        'description' => 'Redirect to ' . $domain,
                     ];
-                } elseif ($term instanceof Modifier\ExpModifier) {
+                } elseif ($mechanismName === 'exp') {
+                    $domain = $this->getDomainFromMechanism($term, $termString);
                     $description['modifiers'][] = [
                         'type' => 'exp',
                         'value' => $termString,
-                        'domain' => $term->getDomain(),
-                        'description' => 'Explanation: ' . $term->getDomain(),
+                        'domain' => $domain,
+                        'description' => 'Explanation: ' . $domain,
                     ];
                 } else {
                     $description['mechanisms'][] = [
-                        'type' => 'unknown',
+                        'type' => $mechanismName,
                         'value' => $termString,
                         'description' => 'Unknown mechanism',
                     ];
@@ -440,7 +461,12 @@ class SpfRecordService
     public function flattenRecord(string $recordString): array
     {
         try {
-            $record = Record::fromString($recordString);
+            $record = $this->decoder->getRecordFromTXT($recordString);
+            
+            if ($record === null) {
+                return ['error' => 'Not a valid SPF record'];
+            }
+            
             $terms = $record->getTerms();
             
             $ip4List = [];
@@ -450,18 +476,22 @@ class SpfRecordService
             $allQualifier = null;
             
             foreach ($terms as $term) {
-                if ($term instanceof Mechanism\Ip4Mechanism) {
-                    $ip = $term->getIp();
-                    $ip4List[] = is_object($ip) ? (string) $ip : $ip;
-                } elseif ($term instanceof Mechanism\Ip6Mechanism) {
-                    $ip = $term->getIp();
-                    $ip6List[] = is_object($ip) ? (string) $ip : $ip;
-                } elseif ($term instanceof Mechanism\IncludeMechanism) {
-                    $includes[] = $term->getDomain();
-                } elseif ($term instanceof Mechanism\AllMechanism) {
+                $termString = (string) $term;
+                $mechanismName = $term->getName();
+                
+                if ($mechanismName === 'ip4') {
+                    $ip = $this->extractDomainFromString($termString);
+                    $ip4List[] = $ip;
+                } elseif ($mechanismName === 'ip6') {
+                    $ip = $this->extractDomainFromString($termString);
+                    $ip6List[] = $ip;
+                } elseif ($mechanismName === 'include') {
+                    $domain = $this->getDomainFromMechanism($term, $termString);
+                    $includes[] = $domain;
+                } elseif ($mechanismName === 'all') {
                     $allQualifier = $term->getQualifier();
                 } else {
-                    $otherMechanisms[] = (string) $term;
+                    $otherMechanisms[] = $termString;
                 }
             }
             
@@ -479,5 +509,420 @@ class SpfRecordService
                 'error' => 'Failed to flatten SPF record: ' . $e->getMessage(),
             ];
         }
+    }
+
+    // ============================================
+    // SPF CHECKING FUNCTIONALITY
+    // ============================================
+
+    /**
+     * Check SPF record for a specific domain
+     *
+     * @param string $domain
+     * @return SpfCheck|null
+     */
+    public function checkDomain(string $domain): ?SpfCheck
+    {
+        try {
+            // Check if we have a recent cached result
+            $cacheKey = 'spf_check_' . md5($domain);
+            if (Cache::has($cacheKey)) {
+                $cached = Cache::get($cacheKey);
+                // Verify we got a valid object
+                if ($cached instanceof SpfCheck) {
+                    return $cached;
+                }
+                // If not valid, remove from cache
+                Cache::forget($cacheKey);
+            }
+            
+            // Perform DNS lookup
+            $spfRecord = $this->getDnsSpfRecord($domain);
+            
+            // Find or create the check record
+            $check = SpfCheck::firstOrNew(['domain' => $domain]);
+            
+            // Try to get domain_id if it exists
+            $domainModel = Domain::where('domain', $domain)->first();
+            if ($domainModel) {
+                $check->domain_id = $domainModel->domain_id;
+            }
+            
+            if ($spfRecord) {
+                // Parse and validate the SPF record
+                $parsed = $this->parseSpfRecord($spfRecord, $domain);
+                
+                $check->record = $spfRecord;
+                $check->valid = $parsed['valid'];
+                $check->policy = $parsed['policy'];
+                $check->spf_version = $parsed['version'] ?? 'v=spf1';
+                $check->lookup_count = $parsed['lookup_count'] ?? 0;
+                $check->mechanisms = json_encode($parsed['mechanisms'] ?? []);
+                $check->includes = json_encode($parsed['includes'] ?? []);
+                $check->ip4 = json_encode($parsed['ip4'] ?? []);
+                $check->ip6 = json_encode($parsed['ip6'] ?? []);
+                $check->mx_domains = json_encode($parsed['mx_domains'] ?? []);
+                $check->a_domains = json_encode($parsed['a_domains'] ?? []);
+                $check->modifiers = json_encode($parsed['modifiers'] ?? []);
+                $check->has_ptr = $parsed['has_ptr'] ?? false;
+                $check->has_exists = $parsed['has_exists'] ?? false;
+                $check->mechanism_count = $parsed['mechanism_count'] ?? 0;
+                $check->validation_issues = json_encode($parsed['validation_issues'] ?? []);
+                $check->error_message = null;
+            } else {
+                $check->valid = false;
+                $check->error_message = 'No SPF record found for domain';
+                $check->record = null;
+                $check->validation_issues = null;
+            }
+            
+            $check->last_checked_at = now();
+            $check->next_check_at = now()->addHours(24);
+            $check->save();
+            
+            // Reload the model to ensure we have a fresh instance
+            $check = $check->fresh();
+            
+            // Cache the result for 1 hour
+            Cache::put($cacheKey, $check, 3600);
+            
+            return $check;
+            
+        } catch (\Exception $e) {
+            Log::error('SPF check failed for domain ' . $domain . ': ' . $e->getMessage());
+            
+            try {
+                $check = SpfCheck::firstOrNew(['domain' => $domain]);
+                $check->valid = false;
+                $check->error_message = 'Error checking SPF: ' . $e->getMessage();
+                $check->last_checked_at = now();
+                $check->save();
+                return $check;
+            } catch (\Exception $e2) {
+                Log::error('Failed to save SPF error for domain ' . $domain . ': ' . $e2->getMessage());
+                return null;
+            }
+        }
+    }
+    
+    /**
+     * Get DNS SPF record for a domain
+     *
+     * @param string $domain
+     * @return string|null
+     */
+    protected function getDnsSpfRecord(string $domain): ?string
+    {
+        $records = dns_get_record($domain, DNS_TXT);
+        
+        foreach ($records as $record) {
+            if (isset($record['txt']) && str_starts_with($record['txt'], 'v=spf1')) {
+                return $record['txt'];
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Parse and validate an SPF record using the Decoder
+     *
+     * @param string $spfString
+     * @param string $domain
+     * @return array
+     */
+    protected function parseSpfRecord(string $spfString, string $domain): array
+    {
+        $result = [
+            'valid' => false,
+            'policy' => null,
+            'version' => 'v=spf1',
+            'lookup_count' => 0,
+            'mechanisms' => [],
+            'includes' => [],
+            'ip4' => [],
+            'ip6' => [],
+            'mx_domains' => [],
+            'a_domains' => [],
+            'modifiers' => [],
+            'has_ptr' => false,
+            'has_exists' => false,
+            'mechanism_count' => 0,
+            'validation_issues' => [],
+        ];
+        
+        try {
+            // Use the decoder to parse the SPF record
+            $record = $this->decoder->getRecordFromTXT($spfString);
+            
+            if ($record === null) {
+                $result['validation_issues'][] = [
+                    'level' => 'error',
+                    'message' => 'Not a valid SPF record',
+                    'term' => null,
+                ];
+                return $result;
+            }
+            
+            $terms = $record->getTerms();
+            
+            $lookupCount = 0;
+            $mechanisms = [];
+            $validationIssues = [];
+            
+            foreach ($terms as $term) {
+                $termString = (string) $term;
+                $result['mechanism_count']++;
+                
+                // Get the mechanism name
+                $mechanismName = $term->getName();
+                
+                // Categorize different mechanism types using getName()
+                if ($mechanismName === 'all') {
+                    $qualifier = $term->getQualifier();
+                    $result['policy'] = match($qualifier) {
+                        Mechanism::QUALIFIER_FAIL => '-all',
+                        Mechanism::QUALIFIER_SOFTFAIL => '~all',
+                        Mechanism::QUALIFIER_NEUTRAL => '?all',
+                        Mechanism::QUALIFIER_PASS => '+all',
+                        default => null,
+                    };
+                    $mechanisms[] = ['type' => 'all', 'value' => $termString];
+                } elseif ($mechanismName === 'include') {
+                    $includeDomain = $this->getDomainFromMechanism($term, $termString);
+                    $result['includes'][] = $includeDomain;
+                    $lookupCount++;
+                    $mechanisms[] = ['type' => 'include', 'value' => $termString, 'domain' => $includeDomain];
+                } elseif ($mechanismName === 'ip4') {
+                    $ipString = $this->extractDomainFromString($termString);
+                    $result['ip4'][] = $ipString;
+                    $mechanisms[] = ['type' => 'ip4', 'value' => $termString, 'ip' => $ipString];
+                } elseif ($mechanismName === 'ip6') {
+                    $ipString = $this->extractDomainFromString($termString);
+                    $result['ip6'][] = $ipString;
+                    $mechanisms[] = ['type' => 'ip6', 'value' => $termString, 'ip' => $ipString];
+                } elseif ($mechanismName === 'mx') {
+                    $mxDomain = $this->getDomainFromMechanism($term, $termString) ?: $domain;
+                    $result['mx_domains'][] = $mxDomain;
+                    $lookupCount++;
+                    $mechanisms[] = ['type' => 'mx', 'value' => $termString, 'domain' => $mxDomain];
+                } elseif ($mechanismName === 'a') {
+                    $aDomain = $this->getDomainFromMechanism($term, $termString) ?: $domain;
+                    $result['a_domains'][] = $aDomain;
+                    $lookupCount++;
+                    $mechanisms[] = ['type' => 'a', 'value' => $termString, 'domain' => $aDomain];
+                } elseif ($mechanismName === 'ptr') {
+                    $result['has_ptr'] = true;
+                    $lookupCount++;
+                    $mechanisms[] = ['type' => 'ptr', 'value' => $termString];
+                } elseif ($mechanismName === 'exists') {
+                    $existsDomain = $this->getDomainFromMechanism($term, $termString);
+                    $result['has_exists'] = true;
+                    $lookupCount++;
+                    $mechanisms[] = ['type' => 'exists', 'value' => $termString, 'domain' => $existsDomain];
+                } elseif ($mechanismName === 'redirect') {
+                    $redirectDomain = $this->getDomainFromMechanism($term, $termString);
+                    $result['modifiers'][] = ['type' => 'redirect', 'value' => $termString, 'domain' => $redirectDomain];
+                    $lookupCount++;
+                } elseif ($mechanismName === 'exp') {
+                    $expDomain = $this->getDomainFromMechanism($term, $termString);
+                    $result['modifiers'][] = ['type' => 'exp', 'value' => $termString, 'domain' => $expDomain];
+                } else {
+                    // Unknown mechanism type - add as is
+                    $mechanisms[] = ['type' => $mechanismName, 'value' => $termString];
+                }
+            }
+            
+            $result['lookup_count'] = $lookupCount;
+            $result['mechanisms'] = $mechanisms;
+            
+            // Validate the record using SemanticValidator
+            $validator = new SemanticValidator();
+            $validationIssues = $validator->validate($record);
+            
+            foreach ($validationIssues as $issue) {
+                $result['validation_issues'][] = [
+                    'level' => $issue->getLevel(),
+                    'message' => $issue->getMessage(),
+                    'term' => $issue->getTerm() ? (string) $issue->getTerm() : null,
+                ];
+            }
+            
+            // Check if record is valid (has all mechanism and no critical issues)
+            $result['valid'] = !empty($result['policy']) && empty(array_filter($validationIssues, function($issue) {
+                return $issue->getLevel() === 'error' || $issue->getLevel() === 'fatal';
+            }));
+            
+        } catch (Exception $e) {
+            $result['validation_issues'][] = [
+                'level' => 'error',
+                'message' => 'Failed to parse SPF record: ' . $e->getMessage(),
+                'term' => null,
+            ];
+        } catch (\Exception $e) {
+            $result['validation_issues'][] = [
+                'level' => 'error',
+                'message' => 'Unexpected error: ' . $e->getMessage(),
+                'term' => null,
+            ];
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Extract domain from SPF string
+     *
+     * @param string $string
+     * @return string
+     */
+    protected function extractDomainFromString(string $string): string
+    {
+        // Remove the qualifier (+/-/~/?)
+        $string = ltrim($string, '+~?-');
+        
+        // Remove the mechanism name prefix if present (include:, a:, mx:, etc.)
+        $parts = explode(':', $string, 2);
+        if (count($parts) === 2) {
+            // Check if the first part is a known mechanism name
+            $knownMechanisms = ['include', 'a', 'mx', 'exists', 'ptr', 'ip4', 'ip6'];
+            if (in_array($parts[0], $knownMechanisms)) {
+                return trim($parts[1]);
+            }
+        }
+        
+        // Check for equals separator (redirect=domain.com, exp=domain.com)
+        if (strpos($string, '=') !== false) {
+            $parts = explode('=', $string, 2);
+            return trim($parts[1]);
+        }
+        
+        // If no separator, return the string as is
+        return trim($string);
+    }
+    
+    /**
+     * Get the domain from a mechanism using the proper methods
+     *
+     * @param Mechanism $mechanism
+     * @param string $termString
+     * @return string
+     */
+    protected function getDomainFromMechanism(Mechanism $mechanism, string $termString): string
+    {
+        // Check if the mechanism implements TermWithDomainSpec
+        if ($mechanism instanceof \SPFLib\Term\TermWithDomainSpec) {
+            $domainSpec = $mechanism->getDomainSpec();
+            if ($domainSpec !== null && !$domainSpec->isEmpty()) {
+                return (string) $domainSpec;
+            }
+        }
+        
+        // Fallback: extract from string
+        return $this->extractDomainFromString($termString);
+    }
+    
+    /**
+     * Check all domains
+     *
+     * @return int Number of domains checked
+     */
+    public function checkAllDomains(): int
+    {
+        $domains = Domain::all();
+        $count = 0;
+        
+        foreach ($domains as $domain) {
+            $this->checkDomain($domain->domain);
+            $count++;
+            
+            // Avoid rate limiting
+            if ($count % 10 === 0) {
+                usleep(100000); // 0.1 second delay every 10 domains
+            }
+        }
+        
+        return $count;
+    }
+    
+    /**
+     * Check domains that need updating
+     *
+     * @return int Number of domains checked
+     */
+    public function checkDomainsNeedingUpdate(): int
+    {
+        try {
+            $domains = Domain::whereDoesntHave('spfCheck', function($query) {
+                $query->where('next_check_at', '>', now());
+            })->get();
+        } catch (\Exception $e) {
+            // Fallback if relationship doesn't exist
+            $checkedDomains = SpfCheck::where('next_check_at', '>', now())
+                ->pluck('domain')
+                ->toArray();
+                
+            $domains = Domain::whereNotIn('domain', $checkedDomains)->get();
+        }
+        
+        $count = 0;
+        
+        foreach ($domains as $domain) {
+            $result = $this->checkDomain($domain->domain);
+            if ($result !== null) {
+                $count++;
+            }
+            
+            if ($count % 10 === 0) {
+                usleep(100000);
+            }
+        }
+        
+        return $count;
+    }
+    
+    /**
+     * Get SPF statistics
+     *
+     * @return array
+     */
+    public function getStats(): array
+    {
+        $total = SpfCheck::count();
+        $valid = SpfCheck::where('valid', true)->count();
+        $noRecord = SpfCheck::whereNull('record')->count();
+        $invalid = SpfCheck::where('valid', false)->whereNotNull('record')->count();
+        
+        // Policy breakdown
+        $policies = SpfCheck::whereNotNull('policy')
+            ->select('policy', \DB::raw('count(*) as count'))
+            ->groupBy('policy')
+            ->pluck('count', 'policy')
+            ->toArray();
+        
+        // Lookup count distribution
+        $lookupDistribution = SpfCheck::whereNotNull('lookup_count')
+            ->select('lookup_count', \DB::raw('count(*) as count'))
+            ->groupBy('lookup_count')
+            ->orderBy('lookup_count')
+            ->pluck('count', 'lookup_count')
+            ->toArray();
+        
+        // High lookup count domains (> 10)
+        $highLookups = SpfCheck::where('lookup_count', '>', 10)
+            ->where('valid', true)
+            ->pluck('domain')
+            ->toArray();
+        
+        return [
+            'total' => $total,
+            'valid' => $valid,
+            'no_record' => $noRecord,
+            'invalid' => $invalid,
+            'policies' => $policies,
+            'lookup_distribution' => $lookupDistribution,
+            'high_lookups' => $highLookups,
+            'high_lookup_count' => count($highLookups),
+        ];
     }
 }
