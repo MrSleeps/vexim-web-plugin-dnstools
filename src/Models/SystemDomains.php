@@ -24,6 +24,14 @@ class SystemDomains extends BaseDomain
     }
     
     /**
+     * Get the MTA-STS check for this domain
+     */
+    public function mtaStsCheck()
+    {
+        return $this->hasOne(MtaStsCheck::class, 'domain_id', 'domain_id');
+    }
+    
+    /**
      * Check if domain has a valid DMARC record
      */
     public function hasValidDmarc(): bool
@@ -39,6 +47,15 @@ class SystemDomains extends BaseDomain
     {
         $spf = $this->spfCheck()->first();
         return $spf && $spf->valid;
+    }
+    
+    /**
+     * Check if domain has a valid MTA-STS configuration
+     */
+    public function hasValidMtaSts(): bool
+    {
+        $mtaSts = $this->mtaStsCheck()->first();
+        return $mtaSts && $mtaSts->dns_valid && $mtaSts->policy_valid;
     }
     
     /**
@@ -66,6 +83,27 @@ class SystemDomains extends BaseDomain
     }
     
     /**
+     * Get MTA-STS status
+     */
+    public function getMtaStsStatus(): string
+    {
+        $mtaSts = $this->mtaStsCheck()->first();
+        if (!$mtaSts) {
+            return 'not_checked';
+        }
+        
+        if ($mtaSts->dns_valid && $mtaSts->policy_valid) {
+            return 'valid';
+        }
+        
+        if ($mtaSts->dns_valid && !$mtaSts->policy_valid) {
+            return 'partial';
+        }
+        
+        return 'invalid';
+    }
+    
+    /**
      * Get DMARC policy if available
      */
     public function getDmarcPolicy(): ?string
@@ -81,5 +119,47 @@ class SystemDomains extends BaseDomain
     {
         $spf = $this->spfCheck()->first();
         return $spf ? $spf->policy : null;
+    }
+    
+    /**
+     * Get MTA-STS mode if available
+     */
+    public function getMtaStsMode(): ?string
+    {
+        $mtaSts = $this->mtaStsCheck()->first();
+        return $mtaSts ? $mtaSts->dns_mode : null;
+    }
+    
+    /**
+     * Get MTA-STS mode label
+     */
+    public function getMtaStsModeLabel(): string
+    {
+        $mtaSts = $this->mtaStsCheck()->first();
+        if (!$mtaSts) {
+            return 'Not configured';
+        }
+        return $mtaSts->getModeLabel();
+    }
+    
+    /**
+     * Check if MTA-STS has MX mismatch
+     */
+    public function hasMtaStsMxMismatch(): bool
+    {
+        $mtaSts = $this->mtaStsCheck()->first();
+        return $mtaSts && $mtaSts->mx_mismatch;
+    }
+    
+    /**
+     * Get MTA-STS policy age
+     */
+    public function getMtaStsPolicyAge(): ?string
+    {
+        $mtaSts = $this->mtaStsCheck()->first();
+        if (!$mtaSts || !$mtaSts->policy_fetched_at) {
+            return null;
+        }
+        return $mtaSts->policy_fetched_at->diffForHumans();
     }
 }

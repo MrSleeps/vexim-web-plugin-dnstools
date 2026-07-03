@@ -24,7 +24,6 @@ use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Modals\GenerateDmarcForm;
 use VEximweb\Core\Data\Repositories\Interfaces\SettingRepositoryInterface;
 use VEximweb\Plugin\DnsTools\Filament\Resources\DnsToolsResource;
 
-
 class DomainsTable
 {
     public static function configure(Table $table): Table
@@ -58,45 +57,188 @@ class DomainsTable
                         }
                     }),
                 
-                    IconColumn::make('dmarc_status')
-                        ->label('DMARC')
-                        ->alignCenter()
-                        ->getStateUsing(function ($record): string {
-                            $dmarc = $record->dmarcCheck;
-
-                            if (!$dmarc) {
-                                return 'not_checked';
+                // SPF Status Column
+                IconColumn::make('spf_status')
+                    ->label('SPF')
+                    ->alignCenter()
+                    ->getStateUsing(function ($record): string {
+                        $spf = $record->spfCheck;
+                        
+                        if (!$spf) {
+                            return 'not_checked';
+                        }
+                        
+                        if ($spf->valid) {
+                            return 'valid';
+                        }
+                        
+                        if ($spf->record === null) {
+                            return 'no_record';
+                        }
+                        
+                        return 'invalid';
+                    })
+                    ->icon(function ($state): string {
+                        return match($state) {
+                            'valid' => 'heroicon-o-shield-check',
+                            'invalid' => 'heroicon-o-exclamation-triangle',
+                            'no_record' => 'heroicon-o-x-circle',
+                            'not_checked' => 'heroicon-o-question-mark-circle',
+                        };
+                    })
+                    ->color(function ($state): string {
+                        return match($state) {
+                            'valid' => 'success',
+                            'invalid' => 'danger',
+                            'no_record' => 'warning',
+                            'not_checked' => 'gray',
+                        };
+                    })
+                    ->tooltip(function ($record): string {
+                        $spf = $record->spfCheck;
+                        
+                        if (!$spf) {
+                            return 'SPF not checked yet';
+                        }
+                        
+                        if ($spf->valid) {
+                            $tooltip = "SPF valid";
+                            if ($spf->policy) {
+                                $tooltip .= " (Policy: {$spf->getPolicyLabel()})";
                             }
-
-                            return $dmarc->valid ? 'valid' : 'invalid';
-                        })
-                        ->icon(function ($state): string {
-                            return match($state) {
-                                'valid' => 'heroicon-o-shield-check',
-                                'invalid' => 'heroicon-o-exclamation-triangle',
-                                'not_checked' => 'heroicon-o-exclamation-triangle', // or 'heroicon-o-question-mark-circle'
-                            };
-                        })
-                        ->color(function ($state): string {
-                            return match($state) {
-                                'valid' => 'success',
-                                'invalid' => 'danger',
-                                'not_checked' => 'warning',
-                            };
-                        })
-                        ->tooltip(function ($record): string {
-                            $dmarc = $record->dmarcCheck;
-
-                            if (!$dmarc) {
-                                return 'DMARC not checked yet';
+                            if ($spf->lookup_count > 0) {
+                                $tooltip .= " - {$spf->lookup_count} lookups";
                             }
-
-                            if ($dmarc->valid) {
-                                return "DMARC valid (Policy: {$dmarc->getPolicyLabel()})";
+                            return $tooltip;
+                        }
+                        
+                        if ($spf->record === null) {
+                            return 'No SPF record found';
+                        }
+                        
+                        return "SPF invalid: {$spf->error_message}";
+                    }),
+                
+                // DMARC Status Column (already exists)
+                IconColumn::make('dmarc_status')
+                    ->label('DMARC')
+                    ->alignCenter()
+                    ->getStateUsing(function ($record): string {
+                        $dmarc = $record->dmarcCheck;
+                        
+                        if (!$dmarc) {
+                            return 'not_checked';
+                        }
+                        
+                        return $dmarc->valid ? 'valid' : 'invalid';
+                    })
+                    ->icon(function ($state): string {
+                        return match($state) {
+                            'valid' => 'heroicon-o-shield-check',
+                            'invalid' => 'heroicon-o-exclamation-triangle',
+                            'not_checked' => 'heroicon-o-question-mark-circle',
+                        };
+                    })
+                    ->color(function ($state): string {
+                        return match($state) {
+                            'valid' => 'success',
+                            'invalid' => 'danger',
+                            'not_checked' => 'gray',
+                        };
+                    })
+                    ->tooltip(function ($record): string {
+                        $dmarc = $record->dmarcCheck;
+                        
+                        if (!$dmarc) {
+                            return 'DMARC not checked yet';
+                        }
+                        
+                        if ($dmarc->valid) {
+                            return "DMARC valid (Policy: {$dmarc->getPolicyLabel()})";
+                        }
+                        
+                        return "DMARC invalid: {$dmarc->error_message}";
+                    }),
+                
+                // MTA-STS Status Column
+                IconColumn::make('mta_sts_status')
+                    ->label('MTA-STS')
+                    ->alignCenter()
+                    ->getStateUsing(function ($record): string {
+                        $mtaSts = $record->mtaStsCheck;
+                        
+                        if (!$mtaSts) {
+                            return 'not_checked';
+                        }
+                        
+                        // DNS valid AND policy valid = full valid
+                        if ($mtaSts->dns_valid && $mtaSts->policy_valid) {
+                            return 'valid';
+                        }
+                        
+                        // DNS valid but policy missing/invalid = partial
+                        if ($mtaSts->dns_valid && !$mtaSts->policy_valid) {
+                            return 'partial';
+                        }
+                        
+                        // DNS invalid but checked
+                        if (!$mtaSts->dns_valid && $mtaSts->checked_at) {
+                            return 'invalid';
+                        }
+                        
+                        return 'not_checked';
+                    })
+                    ->icon(function ($state): string {
+                        return match($state) {
+                            'valid' => 'heroicon-o-shield-check',
+                            'partial' => 'heroicon-o-exclamation-triangle',
+                            'invalid' => 'heroicon-o-x-circle',
+                            'not_checked' => 'heroicon-o-question-mark-circle',
+                        };
+                    })
+                    ->color(function ($state): string {
+                        return match($state) {
+                            'valid' => 'success',
+                            'partial' => 'warning',
+                            'invalid' => 'danger',
+                            'not_checked' => 'gray',
+                        };
+                    })
+                    ->tooltip(function ($record): string {
+                        $mtaSts = $record->mtaStsCheck;
+                        
+                        if (!$mtaSts) {
+                            return 'MTA-STS not checked yet';
+                        }
+                        
+                        if ($mtaSts->dns_valid && $mtaSts->policy_valid) {
+                            $tooltip = "MTA-STS fully configured";
+                            if ($mtaSts->dns_mode) {
+                                $tooltip .= " (Mode: {$mtaSts->getModeLabel()})";
                             }
-
-                            return "DMARC invalid: {$dmarc->error_message}";
-                        }),
+                            if ($mtaSts->dns_max_age) {
+                                $tooltip .= " - Max Age: {$mtaSts->dns_max_age}s";
+                            }
+                            if ($mtaSts->mx_mismatch) {
+                                $tooltip .= " ⚠️ MX Mismatch detected!";
+                            }
+                            return $tooltip;
+                        }
+                        
+                        if ($mtaSts->dns_valid && !$mtaSts->policy_valid) {
+                            $tooltip = "MTA-STS DNS record found";
+                            if ($mtaSts->error_message) {
+                                $tooltip .= " - Policy issue: {$mtaSts->error_message}";
+                            }
+                            return $tooltip;
+                        }
+                        
+                        if (!$mtaSts->dns_valid) {
+                            return "MTA-STS invalid: {$mtaSts->error_message}";
+                        }
+                        
+                        return 'MTA-STS not checked yet';
+                    }),
             ])
             ->filters([
                 SelectFilter::make('enabled')
@@ -129,7 +271,63 @@ class DomainsTable
                         return $query;
                     }),
                     
-                // DMARC Status Filter
+                // SPF Status Filter
+                SelectFilter::make('spf_status')
+                    ->label('SPF Status')
+                    ->options([
+                        'valid' => 'Valid SPF',
+                        'invalid' => 'Invalid SPF',
+                        'no_record' => 'No SPF Record',
+                        'not_checked' => 'Not Checked',
+                        'high_lookups' => 'High Lookups (>10)',
+                    ])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if ($data['value'] === 'valid') {
+                            return $query->whereHas('spfCheck', function ($q) {
+                                $q->where('valid', true);
+                            });
+                        }
+                        if ($data['value'] === 'invalid') {
+                            return $query->whereHas('spfCheck', function ($q) {
+                                $q->where('valid', false)->whereNotNull('record');
+                            });
+                        }
+                        if ($data['value'] === 'no_record') {
+                            return $query->whereHas('spfCheck', function ($q) {
+                                $q->whereNull('record');
+                            });
+                        }
+                        if ($data['value'] === 'not_checked') {
+                            return $query->whereDoesntHave('spfCheck');
+                        }
+                        if ($data['value'] === 'high_lookups') {
+                            return $query->whereHas('spfCheck', function ($q) {
+                                $q->where('lookup_count', '>', 10);
+                            });
+                        }
+                        return $query;
+                    }),
+                    
+                // SPF Policy Filter
+                SelectFilter::make('spf_policy')
+                    ->label('SPF Policy')
+                    ->options([
+                        '-all' => 'Hard Fail (Reject)',
+                        '~all' => 'Soft Fail (Mark)',
+                        '?all' => 'Neutral',
+                        '+all' => 'Pass (DANGEROUS)',
+                    ])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if ($data['value']) {
+                            return $query->whereHas('spfCheck', function ($q) use ($data) {
+                                $q->where('policy', $data['value'])
+                                  ->where('valid', true);
+                            });
+                        }
+                        return $query;
+                    }),
+                
+                // DMARC Status Filter (already exists)
                 SelectFilter::make('dmarc_status')
                     ->label('DMARC Status')
                     ->options([
@@ -171,12 +369,84 @@ class DomainsTable
                         }
                         return $query;
                     }),
+                
+                // MTA-STS Status Filter
+                SelectFilter::make('mta_sts_status')
+                    ->label('MTA-STS Status')
+                    ->options([
+                        'valid' => 'Valid MTA-STS',
+                        'partial' => 'Partial (DNS only)',
+                        'invalid' => 'Invalid MTA-STS',
+                        'not_checked' => 'Not Checked',
+                    ])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if ($data['value'] === 'valid') {
+                            return $query->whereHas('mtaStsCheck', function ($q) {
+                                $q->where('dns_valid', true)
+                                  ->where('policy_valid', true);
+                            });
+                        }
+                        if ($data['value'] === 'partial') {
+                            return $query->whereHas('mtaStsCheck', function ($q) {
+                                $q->where('dns_valid', true)
+                                  ->where('policy_valid', false);
+                            });
+                        }
+                        if ($data['value'] === 'invalid') {
+                            return $query->whereHas('mtaStsCheck', function ($q) {
+                                $q->where('dns_valid', false);
+                            });
+                        }
+                        if ($data['value'] === 'not_checked') {
+                            return $query->whereDoesntHave('mtaStsCheck');
+                        }
+                        return $query;
+                    }),
+                    
+                // MTA-STS Mode Filter
+                SelectFilter::make('mta_sts_mode')
+                    ->label('MTA-STS Mode')
+                    ->options([
+                        'enforce' => 'Enforce (Strict)',
+                        'testing' => 'Testing',
+                        'none' => 'None (Disabled)',
+                    ])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if ($data['value']) {
+                            return $query->whereHas('mtaStsCheck', function ($q) use ($data) {
+                                $q->where('dns_mode', $data['value'])
+                                  ->where('policy_valid', true);
+                            });
+                        }
+                        return $query;
+                    }),
+                    
+                // MX Mismatch Filter
+                SelectFilter::make('mx_mismatch')
+                    ->label('MX Mismatch')
+                    ->options([
+                        '1' => 'Has MX Mismatch',
+                        '0' => 'No MX Mismatch',
+                    ])
+                    ->query(function (Builder $query, array $data): Builder {
+                        if ($data['value'] !== null && $data['value'] !== '') {
+                            return $query->whereHas('mtaStsCheck', function ($q) use ($data) {
+                                $q->where('mx_mismatch', (bool)$data['value']);
+                            });
+                        }
+                        return $query;
+                    }),
             ])
   
             ->recordActions([
+
+                
+
+                
+            ActionGroup::make([
+                // Check DMARC Action
                 Action::make('checkDmarc')
-                    ->icon(Heroicon::ArrowPath)
-                    ->label('')
+                    ->label('Check DMARC')
                     ->tooltip('Check DMARC record now')
                     ->color('info')
                     ->action(function ($record) {
@@ -206,59 +476,103 @@ class DomainsTable
                                 ->send();
                         }
                     }),
+                    
+                // Check SPF Action
+                Action::make('checkSpf')
+                    ->label('Check SPF')
+                    ->tooltip('Check SPF record now')
+                    ->color('info')
+                    ->action(function ($record) {
+                        try {
+                            $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
+                            $result = $service->checkDomain($record->domain);
+                            
+                            if ($result && $result->valid) {
+                                Notification::make()
+                                    ->title('SPF check completed')
+                                    ->body("Valid SPF record found for {$record->domain}")
+                                    ->success()
+                                    ->send();
+                            } else {
+                                $error = $result ? $result->error_message : 'Unknown error';
+                                Notification::make()
+                                    ->title('SPF check completed')
+                                    ->body("No valid SPF record for {$record->domain}: {$error}")
+                                    ->warning()
+                                    ->send();
+                            }
+                        } catch (\Exception $e) {
+                            Notification::make()
+                                ->title('SPF check failed')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+                
+                // Check MTA-STS Action
+                Action::make('checkMtaSts')
+                    ->label('Check MTA-STS')
+                    ->tooltip('Check MTA-STS record now')
+                    ->color('info')
+                    ->action(function ($record) {
+                        try {
+                            $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
+                            $result = $service->checkDomain($record->domain, $record->domain_id);
+                            
+                            if ($result && $result->valid) {
+                                Notification::make()
+                                    ->title('MTA-STS check completed')
+                                    ->body("Valid MTA-STS configuration found for {$record->domain}")
+                                    ->success()
+                                    ->send();
+                            } else {
+                                $error = $result ? $result->error_message : 'Unknown error';
+                                Notification::make()
+                                    ->title('MTA-STS check completed')
+                                    ->body("No valid MTA-STS for {$record->domain}: {$error}")
+                                    ->warning()
+                                    ->send();
+                            }
+                        } catch (\Exception $e) {
+                            Notification::make()
+                                ->title('MTA-STS check failed')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    }),                    
+
+                ])->icon(Heroicon::ArrowPath),
           
-                    
-                //EditAction::make(),
                 ActionGroup::make([
-Action::make('generateDmarc')
-    ->label('Generate DMARC')
-    ->icon('heroicon-o-document-text')
-    ->url(fn ($record) => DnsToolsResource::getUrl('generateDmarc', ['domain' => $record])),      
-Action::make('generateSpf')
-    ->label('Generate SPF')
-    ->icon('heroicon-o-document-text')
-    ->url(fn ($record) => DnsToolsResource::getUrl('generateSpf', ['domain' => $record])),      
-                    EditAction::make(),
-                    EditAction::make(),
+                    Action::make('generateDmarc')
+                        ->label('Generate DMARC')
+                        ->icon('heroicon-o-document-text')
+                        ->url(fn ($record) => DnsToolsResource::getUrl('generateDmarc', ['domain' => $record])),
+                        
+                    Action::make('generateSpf')
+                        ->label('Generate SPF')
+                        ->icon('heroicon-o-document-text')
+                        ->url(fn ($record) => DnsToolsResource::getUrl('generateSpf', ['domain' => $record])),
+                        
                     EditAction::make(),
                     
-Action::make('dmarc')
-    ->fillForm(fn (SettingRepositoryInterface $settings, $record) =>
-        GenerateDmarcForm::values($settings, $record)  // Pass the record
-    )
-    ->form(fn ($record) =>
-        GenerateDmarcForm::schema($record)  // Pass the full record, not just domain string
-    )
-    ->action(fn (array $data, SettingRepositoryInterface $settings, $record) =>
-        GenerateDmarcForm::save($settings, $data, $record)  // Pass the record
-    ),                    
-/*                    
-Action::make('dmarc')
-    ->fillForm(fn (SettingRepositoryInterface $settings) =>
-        GenerateDmarcForm::values($settings)
-    )
-    ->form(fn ($record) =>
-        GenerateDmarcForm::schema($record->domain)
-    )
-    ->action(fn (array $data, SettingRepositoryInterface $settings, $record) =>
-        GenerateDmarcForm::save($settings, $data, $record->domain)
-    ),                    
-                    
-  */                  /*
                     Action::make('dmarc')
-                        ->fillForm(fn (SettingRepositoryInterface $settings) =>
-                            GenerateDmarcForm::values($settings)
+                        ->fillForm(fn (SettingRepositoryInterface $settings, $record) =>
+                            GenerateDmarcForm::values($settings, $record)
                         )
-                        ->form(GenerateDmarcForm::schema())
-                        ->action(fn (array $data, SettingRepositoryInterface $settings) =>
-                            GenerateDmarcForm::save($settings, $data)
-                        ),  
-                    */
+                        ->form(fn ($record) =>
+                            GenerateDmarcForm::schema($record)
+                        )
+                        ->action(fn (array $data, SettingRepositoryInterface $settings, $record) =>
+                            GenerateDmarcForm::save($settings, $data, $record)
+                        ),
+                        
                     Action::make('viewDmarc')
                         ->label('DMARC Details')
                         ->modalHeading('DMARC Record Details')
                         ->modalSubheading(fn ($record) => $record->domain)
-
                         ->modalContent(fn ($record) => view(
                             'dns-tools::filament.modals.dmarc-details',
                             [
@@ -267,33 +581,147 @@ Action::make('dmarc')
                                 'record' => $record,
                             ]
                         ))
-
                         ->modalWidth('3xl')
-
                         ->modalActions([
                             Action::make('checkAgain')
                                 ->label('Check Again')
                                 ->action(function ($record) {
                                     $service = app(\VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService::class);
                                     $service->checkDomain($record->domain, $record->domain_id);
-
+                                    
                                     Notification::make()
                                         ->title('DMARC check completed')
                                         ->success()
                                         ->send();
                                 }),
-
                             Action::make('close')
                                 ->label('Close')
                                 ->close(),
-                        ]),                          
+                        ]),
+                        
+                    // MTA-STS Details Modal
+                    Action::make('viewMtaSts')
+                        ->label('MTA-STS Details')
+                        ->modalHeading('MTA-STS Details')
+                        ->modalSubheading(fn ($record) => $record->domain)
+                        ->modalContent(fn ($record) => view(
+                            'dns-tools::filament.modals.mta-sts-details',
+                            [
+                                'domain' => $record->domain,
+                                'mtaSts' => $record->mtaStsCheck,
+                                'record' => $record,
+                            ]
+                        ))
+                        ->modalWidth('3xl')
+                        ->modalActions([
+                            Action::make('checkAgain')
+                                ->label('Check Again')
+                                ->action(function ($record) {
+                                    $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
+                                    $service->checkDomain($record->domain, $record->domain_id);
+                                    
+                                    Notification::make()
+                                        ->title('MTA-STS check completed')
+                                        ->success()
+                                        ->send();
+                                })
+                                ->icon(Heroicon::ArrowPath),
+                            Action::make('close')
+                                ->label('Close')
+                                ->close(),
+                        ]),
+                        
+                    // SPF Details Modal
+                    Action::make('viewSpf')
+                        ->label('SPF Details')
+                        ->modalHeading('SPF Record Details')
+                        ->modalSubheading(fn ($record) => $record->domain)
+                        ->modalContent(fn ($record) => view(
+                            'dns-tools::filament.modals.spf-details',
+                            [
+                                'domain' => $record->domain,
+                                'spf' => $record->spfCheck,
+                                'record' => $record,
+                            ]
+                        ))
+                        ->modalWidth('3xl')
+                        ->modalActions([
+                            Action::make('checkAgain')
+                                ->label('Check Again')
+                                ->action(function ($record) {
+                                    $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
+                                    $service->checkDomain($record->domain);
+                                    
+                                    Notification::make()
+                                        ->title('SPF check completed')
+                                        ->success()
+                                        ->send();
+                                })
+                                ->icon(Heroicon::ArrowPath),
+                            Action::make('close')
+                                ->label('Close')
+                                ->close(),
+                        ]),
                 ]),                
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),
                 ]),
-                // Add bulk action to check DMARC for selected domains
+                
+                // Bulk Check SPF
+                Action::make('checkSelectedSpf')
+                    ->label('Check SPF for selected')
+                    ->icon(Heroicon::ArrowPath)
+                    ->color('info')
+                    ->requiresConfirmation()
+                    ->action(function ($records) {
+                        $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
+                        $count = 0;
+                        $valid = 0;
+                        
+                        foreach ($records as $record) {
+                            $result = $service->checkDomain($record->domain);
+                            $count++;
+                            if ($result && $result->valid) {
+                                $valid++;
+                            }
+                        }
+                        
+                        Notification::make()
+                            ->title("SPF check completed for {$count} domains")
+                            ->body("{$valid} domains have valid SPF records")
+                            ->success()
+                            ->send();
+                    }),
+                
+                // Bulk Check MTA-STS
+                Action::make('checkSelectedMtaSts')
+                    ->label('Check MTA-STS for selected')
+                    ->icon(Heroicon::ArrowPath)
+                    ->color('info')
+                    ->requiresConfirmation()
+                    ->action(function ($records) {
+                        $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
+                        $count = 0;
+                        $valid = 0;
+                        
+                        foreach ($records as $record) {
+                            $result = $service->checkDomain($record->domain, $record->domain_id);
+                            $count++;
+                            if ($result && $result->valid) {
+                                $valid++;
+                            }
+                        }
+                        
+                        Notification::make()
+                            ->title("MTA-STS check completed for {$count} domains")
+                            ->body("{$valid} domains have valid MTA-STS configurations")
+                            ->success()
+                            ->send();
+                    }),
+                
+                // Bulk Check DMARC (already exists)
                 Action::make('checkSelectedDmarc')
                     ->label('Check DMARC for selected')
                     ->icon(Heroicon::ArrowPath)
