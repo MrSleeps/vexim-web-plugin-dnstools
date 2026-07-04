@@ -154,7 +154,7 @@ class DnsToolsResource extends Resource
         $user = auth()->user();
         
         // Hide for domain-user
-        if (!$user || $user->isDomainUser()) {
+        if (!$user || $user->isDomainUser() || $user->isDomainAdmin()){
             return false;
         }
         

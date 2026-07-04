@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use VEximweb\Plugin\DnsTools\Models\MtaStsCheck;
 use VEximweb\Core\Data\Models\Domain;
+use VEximweb\Plugin\MTASTS\Models\MtaSts;
 
 class MtaStsService
 {
@@ -350,6 +351,7 @@ class MtaStsService
                 ->toArray();
                 
             $domains = Domain::where('enabled', true)
+
                 ->whereNotIn('domain', $checkedDomains)
                 ->get();
                 
@@ -490,5 +492,57 @@ class MtaStsService
         }
         
         $record->save();
+    }
+
+    /**
+     * Create or update an MTA-STS record in the database
+     * This will update existing records instead of rejecting them
+     */
+    public function createOrUpdateMtaStsRecord(int $domainId, string $policyType, int $maxAge, string $generatedId, ?array $extraData = null): MtaSts
+    {
+        // Check if record exists
+        $record = MtaSts::where('domain_id', $domainId)->first();
+        
+        if ($record) {
+            // Update existing record
+            $record->policy_type = $policyType;
+            $record->max_age = $maxAge;
+            $record->generated_id = $generatedId;
+            
+            // Update any extra fields if provided
+            if ($extraData) {
+                foreach ($extraData as $key => $value) {
+                    if (in_array($key, ['dns_record_name', 'dns_record_value', 'dns_ttl', 'update_dns'])) {
+                        $record->$key = $value;
+                    }
+                }
+            }
+            
+            $record->save();
+            
+            Log::info('MTA-STS record updated', [
+                'domain_id' => $domainId,
+                'policy_type' => $policyType,
+                'record_id' => $record->id
+            ]);
+            
+            return $record;
+        }
+        
+        // Create new record
+        $record = MtaSts::create([
+            'domain_id' => $domainId,
+            'policy_type' => $policyType,
+            'max_age' => $maxAge,
+            'generated_id' => $generatedId,
+        ]);
+        
+        Log::info('MTA-STS record created', [
+            'domain_id' => $domainId,
+            'policy_type' => $policyType,
+            'record_id' => $record->id
+        ]);
+        
+        return $record;
     }
 }
