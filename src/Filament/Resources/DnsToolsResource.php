@@ -12,6 +12,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use VEximweb\Plugin\DnsTools\Filament\Resources\Dkim\Pages\GenerateDkimPage;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Pages\GenerateDmarcPage;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Spf\Pages\GenerateSpfPage;
 
@@ -164,6 +165,7 @@ class DnsToolsResource extends Resource
     {
         return [
             'index' => ListDomains::route('/'),
+            'generateDkim' => GenerateDkimPage::route('/{domain}/generate-dkim'),
             'generateDmarc' => GenerateDmarcPage::route('/{domain}/generate-dmarc'),
             'generateSpf' => GenerateSpfPage::route('/{domain}/generate-spf'),
         ];
