@@ -23,9 +23,14 @@ use Filament\Actions\ActionGroup;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Modals\GenerateDmarcForm;
 use VEximweb\Core\Data\Repositories\Interfaces\SettingRepositoryInterface;
 use VEximweb\Plugin\DnsTools\Filament\Resources\DnsToolsResource;
+use VEximweb\Plugin\DnsTools\Services\DKIMKeyService;
+use Illuminate\Support\Str;
+use VEximweb\Plugin\MTASTS\Models\MtaSts;
+use VEximweb\Plugin\PDNS\Filament\MtaStsFormExtension;
 
 class DomainsTable
-{
+{   
+    
     public static function configure(Table $table): Table
     {
         return $table
@@ -220,7 +225,7 @@ class DomainsTable
                                 $tooltip .= " - Max Age: {$mtaSts->dns_max_age}s";
                             }
                             if ($mtaSts->mx_mismatch) {
-                                $tooltip .= " ⚠️ MX Mismatch detected!";
+                                $tooltip .= " MX Mismatch detected!";
                             }
                             return $tooltip;
                         }
@@ -437,140 +442,299 @@ class DomainsTable
                         return $query;
                     }),
             ])
-  
             ->recordActions([
-
-                
-
-                
-            ActionGroup::make([
-                // Check DMARC Action
-                Action::make('checkDmarc')
-                    ->label('Check DMARC')
-                    ->tooltip('Check DMARC record now')
-                    ->color('info')
-                    ->action(function ($record) {
-                        try {
-                            $service = app(\VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService::class);
-                            $result = $service->checkDomain($record->domain, $record->domain_id);
-                            
-                            if ($result && $result->valid) {
-                                Notification::make()
-                                    ->title('DMARC check completed')
-                                    ->body("Valid DMARC record found for {$record->domain}")
-                                    ->success()
-                                    ->send();
-                            } else {
-                                $error = $result ? $result->error_message : 'Unknown error';
-                                Notification::make()
-                                    ->title('DMARC check completed')
-                                    ->body("No valid DMARC record for {$record->domain}: {$error}")
-                                    ->warning()
-                                    ->send();
-                            }
-                        } catch (\Exception $e) {
-                            Notification::make()
-                                ->title('DMARC check failed')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
-                        }
-                    }),
-                    
-                // Check SPF Action
-                Action::make('checkSpf')
-                    ->label('Check SPF')
-                    ->tooltip('Check SPF record now')
-                    ->color('info')
-                    ->action(function ($record) {
-                        try {
-                            $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
-                            $result = $service->checkDomain($record->domain);
-                            
-                            if ($result && $result->valid) {
-                                Notification::make()
-                                    ->title('SPF check completed')
-                                    ->body("Valid SPF record found for {$record->domain}")
-                                    ->success()
-                                    ->send();
-                            } else {
-                                $error = $result ? $result->error_message : 'Unknown error';
-                                Notification::make()
-                                    ->title('SPF check completed')
-                                    ->body("No valid SPF record for {$record->domain}: {$error}")
-                                    ->warning()
-                                    ->send();
-                            }
-                        } catch (\Exception $e) {
-                            Notification::make()
-                                ->title('SPF check failed')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
-                        }
-                    }),
-                
-                // Check MTA-STS Action
-                Action::make('checkMtaSts')
-                    ->label('Check MTA-STS')
-                    ->tooltip('Check MTA-STS record now')
-                    ->color('info')
-                    ->action(function ($record) {
-                        try {
-                            $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
-                            $result = $service->checkDomain($record->domain, $record->domain_id);
-                            
-                            if ($result && $result->valid) {
-                                Notification::make()
-                                    ->title('MTA-STS check completed')
-                                    ->body("Valid MTA-STS configuration found for {$record->domain}")
-                                    ->success()
-                                    ->send();
-                            } else {
-                                $error = $result ? $result->error_message : 'Unknown error';
-                                Notification::make()
-                                    ->title('MTA-STS check completed')
-                                    ->body("No valid MTA-STS for {$record->domain}: {$error}")
-                                    ->warning()
-                                    ->send();
-                            }
-                        } catch (\Exception $e) {
-                            Notification::make()
-                                ->title('MTA-STS check failed')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
-                        }
-                    }),                    
-
-                ])->icon(Heroicon::ArrowPath),
-          
                 ActionGroup::make([
+                    // Check DMARC Action
+                    Action::make('checkDmarc')
+                        ->label('Check DMARC')
+                        ->tooltip('Check DMARC record now')
+                        ->color('info')
+                        ->action(function ($record) {
+                            try {
+                                $service = app(\VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService::class);
+                                $result = $service->checkDomain($record->domain, $record->domain_id);
+                                
+                                if ($result && $result->valid) {
+                                    Notification::make()
+                                        ->title('DMARC check completed')
+                                        ->body("Valid DMARC record found for {$record->domain}")
+                                        ->success()
+                                        ->send();
+                                } else {
+                                    $error = $result ? $result->error_message : 'Unknown error';
+                                    Notification::make()
+                                        ->title('DMARC check completed')
+                                        ->body("No valid DMARC record for {$record->domain}: {$error}")
+                                        ->warning()
+                                        ->send();
+                                }
+                            } catch (\Exception $e) {
+                                Notification::make()
+                                    ->title('DMARC check failed')
+                                    ->body($e->getMessage())
+                                    ->danger()
+                                    ->send();
+                            }
+                        }),
+                        
+                    // Check SPF Action
+                    Action::make('checkSpf')
+                        ->label('Check SPF')
+                        ->tooltip('Check SPF record now')
+                        ->color('info')
+                        ->action(function ($record) {
+                            try {
+                                $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
+                                $result = $service->checkDomain($record->domain);
+                                
+                                if ($result && $result->valid) {
+                                    Notification::make()
+                                        ->title('SPF check completed')
+                                        ->body("Valid SPF record found for {$record->domain}")
+                                        ->success()
+                                        ->send();
+                                } else {
+                                    $error = $result ? $result->error_message : 'Unknown error';
+                                    Notification::make()
+                                        ->title('SPF check completed')
+                                        ->body("No valid SPF record for {$record->domain}: {$error}")
+                                        ->warning()
+                                        ->send();
+                                }
+                            } catch (\Exception $e) {
+                                Notification::make()
+                                    ->title('SPF check failed')
+                                    ->body($e->getMessage())
+                                    ->danger()
+                                    ->send();
+                            }
+                        }),
+                    
+                    // Check MTA-STS Action
+                    Action::make('checkMtaSts')
+                        ->label('Check MTA-STS')
+                        ->tooltip('Check MTA-STS record now')
+                        ->color('info')
+                        ->action(function ($record) {
+                            try {
+                                $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
+                                $result = $service->checkDomain($record->domain, $record->domain_id);
+                                
+                                if ($result && $result->valid) {
+                                    Notification::make()
+                                        ->title('MTA-STS check completed')
+                                        ->body("Valid MTA-STS configuration found for {$record->domain}")
+                                        ->success()
+                                        ->send();
+                                } else {
+                                    $error = $result ? $result->error_message : 'Unknown error';
+                                    Notification::make()
+                                        ->title('MTA-STS check completed')
+                                        ->body("No valid MTA-STS for {$record->domain}: {$error}")
+                                        ->warning()
+                                        ->send();
+                                }
+                            } catch (\Exception $e) {
+                                Notification::make()
+                                    ->title('MTA-STS check failed')
+                                    ->body($e->getMessage())
+                                    ->danger()
+                                    ->send();
+                            }
+                        }),
+                ])->icon(Heroicon::ArrowPath),
+                
+                ActionGroup::make([
+                    Action::make('generateDKIM')
+                        ->label('Generate DKIM Keys')
+                        ->icon('heroicon-o-plus-circle')
+                        ->color('success')
+                        ->requiresConfirmation()
+                        ->modalHeading('Generate DKIM Keys')
+                        ->modalDescription('This will generate a new 2048-bit RSA key pair for DKIM signing. The existing key (if any) will be replaced.')
+                        ->modalSubmitActionLabel('Generate')
+                        ->action(function ($record, DKIMKeyService $dkimService, $livewire) {
+                            try {
+                                $dkim = $dkimService->generateKeys($record, 'default');
+                                $dnsRecord = $dkim->getDnsRecord();
+
+                                event(new \App\Events\DkimKeyGenerated(
+                                    zone: $record->domain,
+                                    name: $dnsRecord['name'],
+                                    type: 'TXT',
+                                    content: $dnsRecord['value'],
+                                    ttl: 3600,
+                                    operation: 'create'
+                                ));
+
+                                $record->unsetRelation('dkim');
+                                $record->load('dkim');
+
+                                $recordKey = json_encode($record->getKey());
+
+                                $livewire->js(<<<JS
+                                    setTimeout(() => {
+                                        \$wire.mountTableAction('viewDkim', {$recordKey})
+                                    }, 300);
+                                JS);
+
+                            } catch (\Exception $e) {
+                                Notification::make()
+                                    ->title('Error Generating DKIM Keys')
+                                    ->body($e->getMessage())
+                                    ->danger()
+                                    ->send();
+                            }
+                        }),
+                        
                     Action::make('generateDmarc')
                         ->label('Generate DMARC')
-                        ->icon('heroicon-o-document-text')
+                        ->icon('heroicon-o-plus-circle')
                         ->url(fn ($record) => DnsToolsResource::getUrl('generateDmarc', ['domain' => $record])),
                         
                     Action::make('generateSpf')
                         ->label('Generate SPF')
-                        ->icon('heroicon-o-document-text')
+                        ->icon('heroicon-o-plus-circle')
                         ->url(fn ($record) => DnsToolsResource::getUrl('generateSpf', ['domain' => $record])),
-                        
-                    EditAction::make(),
                     
-                    Action::make('dmarc')
-                        ->fillForm(fn (SettingRepositoryInterface $settings, $record) =>
-                            GenerateDmarcForm::values($settings, $record)
-                        )
-                        ->form(fn ($record) =>
-                            GenerateDmarcForm::schema($record)
-                        )
-                        ->action(fn (array $data, SettingRepositoryInterface $settings, $record) =>
-                            GenerateDmarcForm::save($settings, $data, $record)
-                        ),
+                    // UPDATED MTA-STS Action with extension support
+Action::make('createMtaSts')
+    ->label('Create MTA-STS')
+    ->icon('heroicon-o-plus-circle')
+    ->color('success')
+    ->modalHeading(fn ($record) => "Create MTA-STS Record for {$record->domain}")
+    ->modalSubheading(fn ($record) => "Configure MTA-STS policy for {$record->domain}")
+    ->modalWidth('lg')
+    ->form(function ($record) {
+        // Start with extension fields from MtaStsFormExtension
+        $extensionFields = [];
+        
+        // Check if MtaStsFormExtension exists and has components
+        if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'components')) {
+            $extensionFields = MtaStsFormExtension::components($record);
+        }
+        
+        // Base form fields
+        $baseFields = [
+            // Domain ID (hidden)
+            \Filament\Forms\Components\Hidden::make('domain_id')
+                ->default(fn ($record) => $record->domain_id),
+            
+            // Policy Type Dropdown
+            \Filament\Forms\Components\Select::make('policy_type')
+                ->label('Policy Type')
+                ->options([
+                    'none' => 'None (Disabled)',
+                    'testing' => 'Testing (Report Only)',
+                    'enforce' => 'Enforce (Strict)',
+                ])
+                ->required()
+                ->native(false)
+                ->default('testing')
+                ->placeholder('Select policy type')
+                ->helperText('Choose the MTA-STS policy mode for this domain'),
+            
+            // Max Age Input
+            \Filament\Forms\Components\TextInput::make('max_age')
+                ->label('Max Age (seconds)')
+                ->numeric()
+                ->default(86400)
+                ->minValue(1)
+                ->maxValue(31557600)
+                ->required()
+                ->helperText('Default: 86400 (1 day). Max: 31557600 (1 year)')
+                ->suffix('seconds')
+                ->step(1),
+            
+            // Generated ID (auto-generated)
+            \Filament\Forms\Components\Hidden::make('generated_id')
+                ->default(Str::uuid()->toString()),
+        ];
+
+        // Merge base fields with extension fields
+        return array_merge($baseFields, $extensionFields);
+    })
+    ->action(function (array $data, $record) {
+        try {
+            // Use updateOrCreate - this handles both creation and update
+            $mtaSts = MtaSts::updateOrCreate(
+                ['domain_id' => $data['domain_id']], // Find by domain_id
+                [ // Update or create with these values
+                    'policy_type' => $data['policy_type'],
+                    'max_age' => $data['max_age'],
+                    'generated_id' => $data['generated_id'],
+                ]
+            );
+            
+            // Check if this was a new record or an update
+            $wasRecentlyCreated = $mtaSts->wasRecentlyCreated;
+            
+            if (isset($data['update_dns']) && $data['update_dns']) {
+                $dnsName = $data['dns_record_name'] ?? '_mta-sts';
+                $dnsContent = $data['dns_record_value'] ?? "v=STSv1; id={$data['generated_id']}";
+                $dnsTtl = $data['dns_ttl'] ?? 3600;
+                
+                event(new \App\Events\MtaStsRecordGenerated(
+                    mtaSts: $mtaSts,
+                    zone: $record->domain,
+                    name: $dnsName,
+                    content: $dnsContent,
+                    ttl: $dnsTtl,
+                    operation: $wasRecentlyCreated ? 'create' : 'update'
+                ));
+            }
+            
+            // Run any save callbacks from extensions
+            if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'onSave')) {
+                MtaStsFormExtension::onSave($mtaSts, $data);
+            }
+            
+            $message = $wasRecentlyCreated 
+                ? "MTA-STS record created for domain: {$record->domain}"
+                : "MTA-STS record updated for domain: {$record->domain}";
+            
+            Notification::make()
+                ->title($wasRecentlyCreated ? 'MTA-STS record created' : 'MTA-STS record updated')
+                ->body($message)
+                ->success()
+                ->send();
+                
+        } catch (\Exception $e) {
+            Notification::make()
+                ->title('Error saving MTA-STS record')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+        }
+    })
+    ->modalSubmitActionLabel('Save MTA-STS Record')
+    ->modalCancelActionLabel('Cancel'),
                         
+                    // DKIM Details Modal
+                    Action::make('viewDkim')
+                        ->label('DKIM Details')
+                        ->icon('heroicon-o-eye')
+                        ->modalHeading('DKIM Record Details')
+                        ->modalSubheading(fn ($record) => $record->domain)
+                        ->modalContent(function ($record) {
+                            $dkim = $record->dkim;
+
+                            return view('dns-tools::filament.modals.dkim-details', [
+                                'domain' => $record->domain,
+                                'dkim' => $dkim, // Pass the model directly
+                                'record' => $record,
+                            ]);
+                        })
+                        ->modalWidth('3xl')
+                        ->modalActions([
+                            Action::make('close')
+                                ->label('Close')
+                                ->close(),
+                        ]),                  
+                    
                     Action::make('viewDmarc')
                         ->label('DMARC Details')
+                        ->icon('heroicon-o-eye')
                         ->modalHeading('DMARC Record Details')
                         ->modalSubheading(fn ($record) => $record->domain)
                         ->modalContent(fn ($record) => view(
@@ -602,6 +766,7 @@ class DomainsTable
                     // MTA-STS Details Modal
                     Action::make('viewMtaSts')
                         ->label('MTA-STS Details')
+                        ->icon('heroicon-o-eye')
                         ->modalHeading('MTA-STS Details')
                         ->modalSubheading(fn ($record) => $record->domain)
                         ->modalContent(fn ($record) => view(
@@ -634,6 +799,7 @@ class DomainsTable
                     // SPF Details Modal
                     Action::make('viewSpf')
                         ->label('SPF Details')
+                        ->icon('heroicon-o-eye')
                         ->modalHeading('SPF Record Details')
                         ->modalSubheading(fn ($record) => $record->domain)
                         ->modalContent(fn ($record) => view(
@@ -662,90 +828,8 @@ class DomainsTable
                                 ->label('Close')
                                 ->close(),
                         ]),
-                ]),                
-            ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
                 ]),
-                
-                // Bulk Check SPF
-                Action::make('checkSelectedSpf')
-                    ->label('Check SPF for selected')
-                    ->icon(Heroicon::ArrowPath)
-                    ->color('info')
-                    ->requiresConfirmation()
-                    ->action(function ($records) {
-                        $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
-                        $count = 0;
-                        $valid = 0;
-                        
-                        foreach ($records as $record) {
-                            $result = $service->checkDomain($record->domain);
-                            $count++;
-                            if ($result && $result->valid) {
-                                $valid++;
-                            }
-                        }
-                        
-                        Notification::make()
-                            ->title("SPF check completed for {$count} domains")
-                            ->body("{$valid} domains have valid SPF records")
-                            ->success()
-                            ->send();
-                    }),
-                
-                // Bulk Check MTA-STS
-                Action::make('checkSelectedMtaSts')
-                    ->label('Check MTA-STS for selected')
-                    ->icon(Heroicon::ArrowPath)
-                    ->color('info')
-                    ->requiresConfirmation()
-                    ->action(function ($records) {
-                        $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
-                        $count = 0;
-                        $valid = 0;
-                        
-                        foreach ($records as $record) {
-                            $result = $service->checkDomain($record->domain, $record->domain_id);
-                            $count++;
-                            if ($result && $result->valid) {
-                                $valid++;
-                            }
-                        }
-                        
-                        Notification::make()
-                            ->title("MTA-STS check completed for {$count} domains")
-                            ->body("{$valid} domains have valid MTA-STS configurations")
-                            ->success()
-                            ->send();
-                    }),
-                
-                // Bulk Check DMARC (already exists)
-                Action::make('checkSelectedDmarc')
-                    ->label('Check DMARC for selected')
-                    ->icon(Heroicon::ArrowPath)
-                    ->color('info')
-                    ->requiresConfirmation()
-                    ->action(function ($records) {
-                        $service = app(\VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService::class);
-                        $count = 0;
-                        $valid = 0;
-                        
-                        foreach ($records as $record) {
-                            $result = $service->checkDomain($record->domain, $record->domain_id);
-                            $count++;
-                            if ($result && $result->valid) {
-                                $valid++;
-                            }
-                        }
-                        
-                        Notification::make()
-                            ->title("DMARC check completed for {$count} domains")
-                            ->body("{$valid} domains have valid DMARC records")
-                            ->success()
-                            ->send();
-                    }),
             ]);
     }
+
 }
