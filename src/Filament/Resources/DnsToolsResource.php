@@ -2,8 +2,6 @@
 
 namespace VEximweb\Plugin\DnsTools\Filament\Resources;
 
-//use VEximweb\Plugin\DnsTools\Filament\Resources\Dmarc\Pages\CreateDomain;
-//use VEximweb\Core\Domain\Filament\Resources\Pages\EditDomain;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Pages\ListDomains;
 use VEximweb\Core\Domain\Filament\Resources\Schemas\DomainForm;
 use VEximweb\Plugin\DnsTools\Filament\Resources\Tables\DomainsTable;
@@ -166,11 +164,8 @@ class DnsToolsResource extends Resource
     {
         return [
             'index' => ListDomains::route('/'),
-            //'dmarc' => GenerateDmarcPage::route('/dmarc'),
             'generateDmarc' => GenerateDmarcPage::route('/{domain}/generate-dmarc'),
             'generateSpf' => GenerateSpfPage::route('/{domain}/generate-spf'),
-            //'create' => CreateDomain::route('/create'),
-            //'edit' => EditDomain::route('/{record}/edit'),
         ];
     }
     
