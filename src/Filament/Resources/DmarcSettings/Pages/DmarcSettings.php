@@ -23,7 +23,7 @@ class DmarcSettings extends Page implements HasSchemas
     
     protected static string $resource = DmarcSettingsResource::class;
     
-    protected string $view = 'pwa::filament.resources.settings.pages.edit-pwa-settings';
+    protected string $view = 'dns-tools::filament.pages.edit-settings';
     
     public ?array $data = [];
 

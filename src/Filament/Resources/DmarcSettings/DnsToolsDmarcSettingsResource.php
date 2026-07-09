@@ -20,9 +20,9 @@ class PwaSettingsResource extends Resource
     
     protected static string|\UnitEnum|null $navigationGroup = 'Settings';
     
-    protected static ?string $label = 'PWA';
+    protected static ?string $label = 'DMARC';
     
-    protected static ?string $pluralLabel = 'PWA';
+    protected static ?string $pluralLabel = 'DMARC';
     
     protected static ?string $model = PWASettings::class;
     
@@ -33,7 +33,7 @@ class PwaSettingsResource extends Resource
     /**
      * Override the resource name for routing
      */
-    protected static ?string $slug = 'pwa-settings';
+    protected static ?string $slug = 'dmarc-settings';
     
     public function boot(): void
     {
@@ -55,7 +55,7 @@ class PwaSettingsResource extends Resource
 
         // Filter only PWA settings
         return array_filter($allSettings, function ($key) {
-            return str_starts_with($key, 'pwa_');
+            return str_starts_with($key, 'dmarc_');
         }, ARRAY_FILTER_USE_KEY);
     }    
     
@@ -86,6 +86,6 @@ class PwaSettingsResource extends Resource
      */
     public static function getRouteNamePrefix(): string
     {
-        return 'pwa-settings';
+        return 'dmarc-settings';
     }
 }
