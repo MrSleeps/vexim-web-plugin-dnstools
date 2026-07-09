@@ -6,6 +6,7 @@ use Filament\Contracts\Plugin;
 use Filament\Panel;
 use Illuminate\Support\Facades\File;
 use VEximweb\Plugin\DnsTools\Filament\Resources\DnsToolsResource;
+use VEximweb\Plugin\DnsTools\Filament\Resources\DmarcSettingsResource;
 
 class DnsToolsPlugin implements Plugin
 {
@@ -23,6 +24,7 @@ class DnsToolsPlugin implements Plugin
     {
         $panel->resources([
             DnsToolsResource::class,
+            DmarcSettingsResource::class,
         ]);        
         
         $widgetPath = __DIR__ . '/Filament/Widgets';

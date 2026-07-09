@@ -19,36 +19,43 @@ return new class extends Migration
                 'value' => 'none',
                 'type' => 'string',
                 'description' => 'DMARC policy: none, quarantine, or reject',
+                'category' => 'dmarc',
             ],
             'dmarc_subdomain_policy' => [
                 'value' => null,
                 'type' => 'string',
                 'description' => 'DMARC subdomain policy: none, quarantine, or reject',
+                'category' => 'dmarc',
             ],
             'dmarc_adkim' => [
                 'value' => 'relaxed',
                 'type' => 'string',
                 'description' => 'DKIM alignment: relaxed or strict',
+                'category' => 'dmarc',
             ],
             'dmarc_aspf' => [
                 'value' => 'relaxed',
                 'type' => 'string',
                 'description' => 'SPF alignment: relaxed or strict',
+                'category' => 'dmarc',
             ],
             'dmarc_percentage' => [
                 'value' => 100,
                 'type' => 'integer',
                 'description' => 'Percentage of messages to apply policy to (0-100)',
+                'category' => 'dmarc',
             ],
             'dmarc_report_interval' => [
                 'value' => 86400,
                 'type' => 'integer',
                 'description' => 'Reporting interval in seconds (default 24 hours)',
+                'category' => 'dmarc',
             ],
             'dmarc_t' => [
                 'value' => 'n',
                 'type' => 'string',
                 'description' => 'Testing mode: y (yes) or n (no)',
+                'category' => 'dmarc',
             ],
 
             // Reporting addresses
@@ -56,47 +63,54 @@ return new class extends Migration
                 'value' => [],
                 'type' => 'json',
                 'description' => 'Aggregate report email addresses',
+                'category' => 'dmarc',
             ],
             'dmarc_ruf' => [
                 'value' => [],
                 'type' => 'json',
                 'description' => 'Forensic report email addresses',
+                'category' => 'dmarc',
             ],
             'dmarc_reporting' => [
                 'value' => ['all'],
                 'type' => 'json',
-                'description' => 'Failure reporting options (fo)',
+                'description' => 'Failure reporting options (fo) - valid values: all, 0, 1, d, s',
+                'category' => 'dmarc',
             ],
 
             // Advanced settings
             'dmarc_np' => [
                 'value' => null,
                 'type' => 'string',
-                'description' => 'Non-existent subdomain policy',
+                'description' => 'Non-existent subdomain policy: none, quarantine, or reject',
+                'category' => 'dmarc',
             ],
             'dmarc_psd' => [
                 'value' => null,
                 'type' => 'string',
-                'description' => 'Public suffix domain policy: y, n, or u',
+                'description' => 'Public suffix domain policy: y (yes), n (no), or u (user-specified)',
+                'category' => 'dmarc',
             ],
 
             // Email localparts (overrides config values)
             'dmarc_rua_localpart' => [
                 'value' => env('DMARC_RUA_LOCALPART', 'dmarc'),
                 'type' => 'string',
-                'description' => 'Custom local part for RUA reports',
+                'description' => 'Custom local part for aggregate (RUA) report email addresses',
+                'category' => 'dmarc',
             ],
             'dmarc_ruf_localpart' => [
                 'value' => env('DMARC_RUF_LOCALPART', 'dmarc'),
                 'type' => 'string',
-                'description' => 'Custom local part for RUF reports',
+                'description' => 'Custom local part for forensic (RUF) report email addresses',
+                'category' => 'dmarc',
             ],
         ];
 
         foreach ($settings as $key => $config) {
             // Check if setting already exists
             if (!$repository->has($key)) {
-                $repository->set($key, $config['value'], $config['type'], $config['description']);
+                $repository->set($key, $config['value'], $config['type'], $config['description'], $config['category']);
             }
         }
     }
