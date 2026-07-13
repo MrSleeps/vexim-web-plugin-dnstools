@@ -15,6 +15,7 @@ class MtaStsService
      */
     public function checkDomain(string $domain, ?int $domainId = null): ?object
     {
+        
         if (!$domainId) {
             $domainModel = Domain::where('domain', $domain)->first();
             $domainId = $domainModel ? $domainModel->domain_id : null;
@@ -25,6 +26,7 @@ class MtaStsService
             'dns_record_found' => false,
             'dns_record' => null,
             'dns_id' => null,
+            'dns_ttl' => null,
             'policy_found' => false,
             'mode' => null,
             'max_age' => null,
@@ -33,45 +35,36 @@ class MtaStsService
         ];
         
         // Step 1: Check DNS TXT record for _mta-sts
-        $txtRecords = $this->getDnsTxtRecords("_mta-sts.{$domain}");
+        $dnsResult = $this->getDnsTxtRecords("_mta-sts.{$domain}");
         
-        if (empty($txtRecords)) {
+        if (empty($dnsResult)) {
             $result->error_message = 'No MTA-STS DNS record found (_mta-sts.' . $domain . ' TXT)';
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
         
         // Parse the DNS record
-        foreach ($txtRecords as $record) {
-            if (str_starts_with($record, 'v=STSv1')) {
+        $foundValidDns = false;
+        foreach ($dnsResult as $dnsRecord) {
+            $txt = $dnsRecord['txt'];
+            if (str_starts_with($txt, 'v=STSv1')) {
                 $result->dns_record_found = true;
-                $result->dns_record = $record;
+                $result->dns_record = $txt;
+                $result->dns_ttl = $dnsRecord['ttl'] ?? 300;
                 
                 // Parse DNS record parts
-                $parts = [];
-                $segments = explode(';', $record);
+                $parts = $this->parseDnsRecord($txt);
                 
-                foreach ($segments as $segment) {
-                    $segment = trim($segment);
-                    if (empty($segment)) continue;
-                    
-                    $kv = explode('=', $segment, 2);
-                    if (count($kv) === 2) {
-                        $key = trim($kv[0]);
-                        $value = trim($kv[1]);
-                        $parts[$key] = $value;
-                    }
-                }
-                
-                // DNS record should have an 'id' field
-                if (isset($parts['id'])) {
-                    $result->dns_id = $parts['id'];
-                } else {
-                    $result->error_message = 'MTA-STS DNS record missing required "id" field';
+                // Validate DNS record
+                $validation = $this->validateDnsRecord($parts);
+                if (!$validation['valid']) {
+                    $result->error_message = $validation['error'];
                     $this->saveRecord($domain, $domainId, $result);
                     return $result;
                 }
                 
+                $result->dns_id = $parts['id'];
+                $foundValidDns = true;
                 break;
             }
         }
@@ -122,6 +115,16 @@ class MtaStsService
             return $result;
         }
         
+        // Step 4: Compare DNS ID with policy ID if present
+        if (isset($policyFile['id']) && $result->dns_id !== $policyFile['id']) {
+            Log::warning("MTA-STS DNS ID mismatch for {$domain}", [
+                'dns_id' => $result->dns_id,
+                'policy_id' => $policyFile['id']
+            ]);
+            // Still valid, but log the warning
+            $result->warning = "DNS ID ({$result->dns_id}) does not match policy ID ({$policyFile['id']})";
+        }
+        
         $result->valid = true;
         $this->saveRecord($domain, $domainId, $result);
         
@@ -129,7 +132,62 @@ class MtaStsService
     }
     
     /**
-     * Get DNS TXT records for a domain
+     * Parse DNS record into parts
+     */
+    protected function parseDnsRecord(string $record): array
+    {
+        $parts = [];
+        $segments = explode(';', $record);
+        
+        foreach ($segments as $segment) {
+            $segment = trim($segment);
+            if (empty($segment)) continue;
+            
+            $kv = explode('=', $segment, 2);
+            if (count($kv) === 2) {
+                $key = trim($kv[0]);
+                $value = trim($kv[1]);
+                $parts[$key] = $value;
+            }
+        }
+        
+        return $parts;
+    }
+    
+    /**
+     * Validate DNS record format
+     */
+    protected function validateDnsRecord(array $parts): array
+    {
+        // Check version
+        if (!isset($parts['v']) || $parts['v'] !== 'STSv1') {
+            return [
+                'valid' => false,
+                'error' => 'Missing or invalid version (must be v=STSv1)'
+            ];
+        }
+        
+        // Check ID
+        if (!isset($parts['id']) || empty($parts['id'])) {
+            return [
+                'valid' => false,
+                'error' => 'Missing required "id" field'
+            ];
+        }
+        
+        // Validate ID format (alphanumeric, dash, underscore)
+        if (!preg_match('/^[a-zA-Z0-9\-_]+$/', $parts['id'])) {
+            return [
+                'valid' => false,
+                'error' => 'Invalid "id" format - use alphanumeric, dash, or underscore only'
+            ];
+        }
+        
+        return ['valid' => true];
+    }
+    
+    /**
+     * Get DNS TXT records for a domain with TTL
      */
     protected function getDnsTxtRecords(string $domain): array
     {
@@ -145,7 +203,10 @@ class MtaStsService
             
             foreach ($result as $record) {
                 if (isset($record['txt'])) {
-                    $records[] = $record['txt'];
+                    $records[] = [
+                        'txt' => $record['txt'],
+                        'ttl' => $record['ttl'] ?? 300,
+                    ];
                 }
             }
         } catch (\Exception $e) {
@@ -262,7 +323,7 @@ class MtaStsService
     }
     
     /**
-     * Validate MX records against policy file
+     * Validate MX records against policy file with wildcard support
      */
     public function validateMxAgainstPolicy(string $domain, array $policy): array
     {
@@ -277,25 +338,59 @@ class MtaStsService
         // Get MX records from DNS
         $mxRecords = $this->getDnsMxRecords($domain);
         $result['dns_mx'] = array_map(function($record) {
-            return $record['target'];
+            return rtrim(strtolower($record['target']), '.');
         }, $mxRecords);
         
-        // Normalize domains (remove trailing dots)
-        $dnsMx = array_map(function($mx) {
-            return rtrim(strtolower($mx), '.');
-        }, $result['dns_mx']);
-        
+        // Normalize policy MX records
         $policyMx = array_map(function($mx) {
             return rtrim(strtolower($mx), '.');
         }, $result['policy_mx']);
         
-        // Check for mismatches
-        $result['missing_in_policy'] = array_diff($dnsMx, $policyMx);
-        $result['missing_in_dns'] = array_diff($policyMx, $dnsMx);
+        // Check for matches with wildcard support
+        $matchedDns = [];
+        $matchedPolicy = [];
+        
+        foreach ($result['dns_mx'] as $dnsMx) {
+            foreach ($policyMx as $policyMxPattern) {
+                if ($this->mxMatchesPattern($dnsMx, $policyMxPattern)) {
+                    $matchedDns[] = $dnsMx;
+                    $matchedPolicy[] = $policyMxPattern;
+                    break;
+                }
+            }
+        }
+        
+        // Find missing records
+        $result['missing_in_policy'] = array_diff($result['dns_mx'], $matchedDns);
+        $result['missing_in_dns'] = array_diff($policyMx, $matchedPolicy);
         
         $result['valid'] = empty($result['missing_in_policy']) && empty($result['missing_in_dns']);
         
         return $result;
+    }
+    
+    /**
+     * Check if an MX record matches a pattern (supports wildcards)
+     */
+    protected function mxMatchesPattern(string $mx, string $pattern): bool
+    {
+        // Exact match
+        if ($mx === $pattern) {
+            return true;
+        }
+        
+        // Wildcard pattern matching
+        if (str_contains($pattern, '*')) {
+            $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+            return preg_match($regex, $mx) === 1;
+        }
+        
+        // Check if MX is a subdomain of the pattern
+        if (str_starts_with($pattern, '.')) {
+            return str_ends_with($mx, $pattern);
+        }
+        
+        return false;
     }
     
     /**
@@ -310,8 +405,9 @@ class MtaStsService
             $this->checkDomain($domain->domain, $domain->domain_id);
             $count++;
             
+            // Rate limiting to avoid DNS throttling
             if ($count % 10 === 0) {
-                usleep(100000);
+                usleep(100000); // 100ms delay
             }
         }
         
@@ -346,12 +442,14 @@ class MtaStsService
             return $count;
             
         } catch (\Exception $e) {
+            Log::error("Error in checkDomainsNeedingUpdate: " . $e->getMessage());
+            
+            // Fallback: check domains not checked in the last 7 days
             $checkedDomains = MtaStsCheck::where('checked_at', '>', now()->subDays(7))
                 ->pluck('domain')
                 ->toArray();
                 
             $domains = Domain::where('enabled', true)
-
                 ->whereNotIn('domain', $checkedDomains)
                 ->get();
                 
@@ -382,11 +480,11 @@ class MtaStsService
             'total' => $total,
             'total_domains' => $totalDomains,
             'coverage' => $totalDomains > 0 ? round(($total / $totalDomains) * 100, 2) : 0,
-            'dns_valid' => MtaStsCheck::validDns()->count(),
-            'dns_no_record' => MtaStsCheck::where('dns_valid', false)
+            'valid' => MtaStsCheck::validDns()->count(),
+            'no_record' => MtaStsCheck::where('dns_valid', false)
                 ->whereNotNull('checked_at')
                 ->count(),
-            'dns_invalid' => MtaStsCheck::where('dns_valid', false)
+            'invalid' => MtaStsCheck::where('dns_valid', false)
                 ->whereNotNull('error_message')
                 ->count(),
             'policy_valid_count' => MtaStsCheck::validPolicy()->count(),
@@ -436,24 +534,30 @@ class MtaStsService
         
         $record->domain_id = $domainId ?? $record->domain_id;
         $record->checked_at = now();
-        $record->next_check_at = now()->addDays(7);
+        
+        // Calculate next check based on TTL or default
+        $ttl = $result->dns_ttl ?? 300;
+        $record->next_check_at = now()->addSeconds(min($ttl * 2, 86400)); // Max 24 hours
         
         // DNS record data
         $record->dns_valid = $result->dns_record_found && $result->valid;
         $record->dns_policy = $result->dns_record;
-        
-        // Policy file data (these come from the policy file, not DNS)
         $record->dns_mode = $result->mode;  // From policy file
         $record->dns_max_age = $result->max_age;  // From policy file
-        $record->dns_mx = $result->mx_record ? implode(',', (array)$result->mx_record) : null;  // From policy file
+        $record->dns_mx = $result->mx_record ? implode(',', (array)$result->mx_record) : null;
         
-        // Store DNS ID separately
+        // Store DNS ID and TTL in raw_data
+        $rawData = $record->raw_data ?? [];
         if ($result->dns_id) {
-            $record->raw_data = array_merge(
-                $record->raw_data ?? [],
-                ['dns_id' => $result->dns_id]
-            );
+            $rawData['dns_id'] = $result->dns_id;
         }
+        if ($result->dns_ttl) {
+            $rawData['dns_ttl'] = $result->dns_ttl;
+        }
+        if (isset($result->warning)) {
+            $rawData['warning'] = $result->warning;
+        }
+        $record->raw_data = $rawData;
         
         // Policy file validation
         $record->policy_valid = $result->policy_found && $result->valid;
@@ -496,11 +600,10 @@ class MtaStsService
 
     /**
      * Create or update an MTA-STS record in the database
-     * This will update existing records instead of rejecting them
      */
     public function createOrUpdateMtaStsRecord(int $domainId, string $policyType, int $maxAge, string $generatedId, ?array $extraData = null): MtaSts
     {
-        // Check if record exists
+        // Check if record exists in the MTASTS model
         $record = MtaSts::where('domain_id', $domainId)->first();
         
         if ($record) {
@@ -544,5 +647,21 @@ class MtaStsService
         ]);
         
         return $record;
+    }
+    
+    /**
+     * Get a specific MTA-STS record by domain
+     */
+    public function getRecord(string $domain): ?MtaStsCheck
+    {
+        return MtaStsCheck::where('domain', $domain)->first();
+    }
+    
+    /**
+     * Get all MTA-STS records
+     */
+    public function getAllRecords(): \Illuminate\Database\Eloquent\Collection
+    {
+        return MtaStsCheck::all();
     }
 }

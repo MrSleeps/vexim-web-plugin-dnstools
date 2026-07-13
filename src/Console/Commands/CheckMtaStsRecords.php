@@ -4,7 +4,7 @@ namespace VEximweb\Plugin\DnsTools\Console\Commands;
 
 use Illuminate\Console\Command;
 use VEximweb\Plugin\DnsTools\Services\MtaStsService;
-use VEximweb\Plugin\DnsTools\Models\MtaStsRecord;
+use VEximweb\Plugin\DnsTools\Models\MtaStsCheck;
 use VEximweb\Core\Data\Models\Domain;
 
 class CheckMtaStsRecords extends Command
@@ -112,105 +112,113 @@ class CheckMtaStsRecords extends Command
         $this->info("Tip: Use --domain=example.com for detailed checks");
     }
     
-protected function checkSingleDomain(MtaStsService $service): void
-{
-    $domain = $this->option('domain');
-    $domainId = $this->option('domain-id');
-    
-    // Auto-detect domain_id if not provided
-    if (!$domainId) {
-        $domainModel = Domain::where('domain', $domain)->first();
-        if ($domainModel) {
-            $domainId = $domainModel->domain_id;
-        }
-    }
-    
-    $this->info("Checking MTA-STS for: {$domain}");
-    $this->line("");
-    
-    $result = $service->checkDomain($domain, $domainId);
-    
-    // Get the saved record for more details
-    $record = MtaStsCheck::where('domain', $domain)->first();
-    
-    if ($result && $result->valid) {
-        $this->info("MTA-STS DNS record found!");
-        $this->line("");
-        $this->line("  Mode: {$result->mode}");
-        $this->line("  Policy: {$result->policy}");
-        $this->line("  MX Record: " . ($result->mx_record ?: 'Not specified'));
-        $this->line("  Max Age: {$result->max_age}s");
-        if (isset($result->id)) {
-            $this->line("  ID: {$result->id}");
-        }
+    protected function checkSingleDomain(MtaStsService $service): void
+    {
+        $domain = $this->option('domain');
+        $domainId = $this->option('domain-id');
         
-        // Show expiry status
-        if ($record && $record->dns_expires_at) {
-            if ($record->isExpired()) {
-                $this->warn("  Policy is EXPIRED (since {$record->dns_expires_at->diffForHumans()})");
-            } else {
-                $this->line("  Expires: {$record->dns_expires_at->diffForHumans()}");
+        // Auto-detect domain_id if not provided
+        if (!$domainId) {
+            $domainModel = Domain::where('domain', $domain)->first();
+            if ($domainModel) {
+                $domainId = $domainModel->domain_id;
             }
         }
         
-        if ($this->option('fetch') || $this->option('mx-check')) {
+        $this->info("Checking MTA-STS for: {$domain}");
+        $this->line("");
+        
+        $result = $service->checkDomain($domain, $domainId);
+        
+        // Get the saved record for more details
+        $record = MtaStsCheck::where('domain', $domain)->first();
+        
+        if ($result && $result->valid) {
+            $this->info("✅ MTA-STS DNS record found!");
             $this->line("");
-            $this->info("Fetching policy file...");
-            $policyFile = $service->fetchPolicyFile($domain);
+            $this->line("  DNS Record: {$result->dns_record}");
+            $this->line("  DNS ID: {$result->dns_id}");
+            $this->line("");
+            $this->line("  Policy Mode: {$result->mode}");
+            $this->line("  Policy Max Age: {$result->max_age}s");
+            if ($result->mx_record) {
+                $this->line("  Policy MX Records: " . implode(', ', (array)$result->mx_record));
+            }
             
-            if ($policyFile) {
-                $this->info("Policy file found!");
-                $this->line("");
-                $this->line("  Version: {$policyFile['version']}");
-                $this->line("  Mode: {$policyFile['mode']}");
-                $this->line("  Max Age: {$policyFile['max_age']}s");
-                if (isset($policyFile['mx'])) {
-                    $this->line("  MX Records: " . implode(', ', $policyFile['mx']));
+            // Show expiry status
+            if ($record && $record->dns_expires_at) {
+                if ($record->isExpired()) {
+                    $this->warn("  ⚠️  Policy is EXPIRED (since {$record->dns_expires_at->diffForHumans()})");
+                } else {
+                    $this->line("  Policy expires: {$record->dns_expires_at->diffForHumans()}");
                 }
+            }
+            
+            if ($this->option('fetch') || $this->option('mx-check')) {
+                $this->line("");
+                $this->info("Fetching policy file...");
+                $policyFile = $service->fetchPolicyFile($domain);
                 
-                if ($this->option('mx-check')) {
-                    $record = MtaStsCheck::where('domain', $domain)->first();
-                    if ($record && $record->mx_validation_details) {
-                        $mxCheck = $record->mx_validation_details;
-                        
-                        $this->line("");
-                        $this->info("MX Record Validation:");
-                        
-                        if ($mxCheck['valid']) {
-                            $this->info("  All MX records match the policy file!");
-                        } else {
-                            $this->error("  MX mismatch detected!");
-                            $this->line("  MX records in DNS: " . implode(', ', $mxCheck['dns_mx'] ?? []));
-                            $this->line("  MX records in policy: " . implode(', ', $mxCheck['policy_mx'] ?? []));
+                if ($policyFile) {
+                    $this->info("✅ Policy file found!");
+                    $this->line("");
+                    $this->line("  Version: {$policyFile['version']}");
+                    $this->line("  Mode: {$policyFile['mode']}");
+                    $this->line("  Max Age: {$policyFile['max_age']}s");
+                    if (isset($policyFile['mx'])) {
+                        $this->line("  MX Records: " . implode(', ', $policyFile['mx']));
+                    }
+                    
+                    if ($this->option('mx-check')) {
+                        $record = MtaStsCheck::where('domain', $domain)->first();
+                        if ($record && $record->mx_validation_details) {
+                            $mxCheck = $record->mx_validation_details;
                             
-                            if (!empty($mxCheck['missing_in_policy'])) {
-                                $this->warn("  Missing in policy: " . implode(', ', $mxCheck['missing_in_policy']));
-                            }
-                            if (!empty($mxCheck['missing_in_dns'])) {
-                                $this->warn("  Missing in DNS: " . implode(', ', $mxCheck['missing_in_dns']));
+                            $this->line("");
+                            $this->info("MX Record Validation:");
+                            
+                            if ($mxCheck['valid']) {
+                                $this->info("  ✅ All MX records match the policy file!");
+                            } else {
+                                $this->error("  ❌ MX mismatch detected!");
+                                $this->line("  MX records in DNS: " . implode(', ', $mxCheck['dns_mx'] ?? []));
+                                $this->line("  MX records in policy: " . implode(', ', $mxCheck['policy_mx'] ?? []));
+                                
+                                if (!empty($mxCheck['missing_in_policy'])) {
+                                    $this->warn("  Missing in policy: " . implode(', ', $mxCheck['missing_in_policy']));
+                                }
+                                if (!empty($mxCheck['missing_in_dns'])) {
+                                    $this->warn("  Missing in DNS: " . implode(', ', $mxCheck['missing_in_dns']));
+                                }
                             }
                         }
                     }
+                } else {
+                    $this->error("❌ Could not fetch policy file");
+                    $this->line("  Policy file should be at: https://mta-sts.{$domain}/.well-known/mta-sts.txt");
                 }
-            } else {
-                $this->error("Could not fetch policy file");
-                $this->line("  Policy file should be at: https://mta-sts.{$domain}/.well-known/mta-sts.txt");
             }
+        } else {
+            $this->error("❌ No valid MTA-STS record found");
+            if ($result) {
+                $this->line("  Error: {$result->error_message}");
+                $this->line("  Raw DNS record: " . ($result->dns_record ?? 'Not found'));
+            }
+            
+            $this->line("");
+            $this->line("A valid MTA-STS DNS record should look like:");
+            $this->line("  v=STSv1; id=123456789");
+            $this->line("");
+            $this->line("The policy file should be at:");
+            $this->line("  https://mta-sts.{$domain}/.well-known/mta-sts.txt");
+            $this->line("");
+            $this->line("And contain:");
+            $this->line("  version: STSv1");
+            $this->line("  mode: enforce");
+            $this->line("  max_age: 86400");
+            $this->line("  mx: mail.example.com");
         }
-    } else {
-        $this->error("No valid MTA-STS record found");
-        if ($result) {
-            $this->line("  Error: {$result->error_message}");
-            $this->line("  Raw DNS record: " . ($result->policy ?? 'Not found'));
-        }
-        
-        $this->line("");
-        $this->line("A valid MTA-STS DNS record should look like:");
-        $this->line("  v=STSv1; id=123456789; mode=enforce; mx=mail.example.com; max_age=86400");
-        $this->line("");
-        $this->line("Required fields: mode (enforce/testing/none) and max_age (seconds)");
     }
-}
     
     protected function checkAllDomains(MtaStsService $service): void
     {
@@ -231,7 +239,7 @@ protected function checkSingleDomain(MtaStsService $service): void
             $this->line("");
             $this->info("Validating MX records against policy files...");
             
-            $records = MtaStsRecord::where('dns_valid', true)
+            $records = MtaStsCheck::where('dns_valid', true)
                 ->whereNotNull('dns_mx')
                 ->get();
                 
@@ -269,7 +277,7 @@ protected function checkSingleDomain(MtaStsService $service): void
             if ($mismatches > 0) {
                 $this->warn("Mismatches found: {$mismatches}");
             } else {
-                $this->info("No mismatches found!");
+                $this->info("No mismatches found! ✅");
             }
         }
     }
