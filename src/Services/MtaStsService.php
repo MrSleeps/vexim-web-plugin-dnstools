@@ -4,23 +4,39 @@ namespace VEximweb\Plugin\DnsTools\Services;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Event;
 use VEximweb\Plugin\DnsTools\Models\MtaStsCheck;
 use VEximweb\Core\Data\Models\Domain;
 use VEximweb\Plugin\MTASTS\Models\MtaSts;
+use VEximweb\Core\Data\Repositories\Interfaces\SettingRepositoryInterface;
 
 class MtaStsService
 {
+    /**
+     * @var SettingRepositoryInterface
+     */
+    protected SettingRepositoryInterface $settingsRepository;
+
+    /**
+     * MtaStsService constructor.
+     *
+     * @param SettingRepositoryInterface $settingsRepository
+     */
+    public function __construct(SettingRepositoryInterface $settingsRepository)
+    {
+        $this->settingsRepository = $settingsRepository;
+    }
+
     /**
      * Check MTA-STS for a specific domain
      */
     public function checkDomain(string $domain, ?int $domainId = null): ?object
     {
-        
         if (!$domainId) {
             $domainModel = Domain::where('domain', $domain)->first();
             $domainId = $domainModel ? $domainModel->domain_id : null;
         }
-        
+
         $result = (object) [
             'valid' => false,
             'dns_record_found' => false,
@@ -32,17 +48,19 @@ class MtaStsService
             'max_age' => null,
             'mx_record' => null,
             'error_message' => null,
+            'cname_found' => false,
+            'cname_target' => null,
         ];
-        
+
         // Step 1: Check DNS TXT record for _mta-sts
         $dnsResult = $this->getDnsTxtRecords("_mta-sts.{$domain}");
-        
+
         if (empty($dnsResult)) {
             $result->error_message = 'No MTA-STS DNS record found (_mta-sts.' . $domain . ' TXT)';
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
         // Parse the DNS record
         $foundValidDns = false;
         foreach ($dnsResult as $dnsRecord) {
@@ -51,10 +69,10 @@ class MtaStsService
                 $result->dns_record_found = true;
                 $result->dns_record = $txt;
                 $result->dns_ttl = $dnsRecord['ttl'] ?? 300;
-                
+
                 // Parse DNS record parts
                 $parts = $this->parseDnsRecord($txt);
-                
+
                 // Validate DNS record
                 $validation = $this->validateDnsRecord($parts);
                 if (!$validation['valid']) {
@@ -62,59 +80,74 @@ class MtaStsService
                     $this->saveRecord($domain, $domainId, $result);
                     return $result;
                 }
-                
+
                 $result->dns_id = $parts['id'];
                 $foundValidDns = true;
                 break;
             }
         }
-        
+
         if (!$result->dns_record_found) {
             $result->error_message = 'No valid MTA-STS DNS record found (must start with v=STSv1)';
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
+        // Step 1.5: Check if CNAME exists (READ-ONLY - just check)
+        $cnameRecord = $this->getDnsCnameRecord("mta-sts.{$domain}");
+        if ($cnameRecord) {
+            $result->cname_found = true;
+            $result->cname_target = $cnameRecord['target'];
+            Log::debug('MTA-STS CNAME found during check', [
+                'domain' => $domain,
+                'target' => $cnameRecord['target']
+            ]);
+        } else {
+            Log::debug('MTA-STS CNAME not found during check', [
+                'domain' => $domain
+            ]);
+        }
+
         // Step 2: Fetch the policy file
         $policyFile = $this->fetchPolicyFile($domain);
-        
+
         if (!$policyFile) {
             $result->error_message = 'MTA-STS policy file not found at https://mta-sts.' . $domain . '/.well-known/mta-sts.txt';
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
         // Step 3: Parse policy file
         $result->policy_found = true;
         $result->mode = $policyFile['mode'] ?? null;
         $result->max_age = $policyFile['max_age'] ?? null;
         $result->mx_record = $policyFile['mx'] ?? null;
-        
+
         // Validate policy file fields
         if (!$result->mode) {
             $result->error_message = 'Policy file missing "mode" field';
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
         if (!in_array($result->mode, ['enforce', 'testing', 'none'])) {
             $result->error_message = "Invalid mode '{$result->mode}' - must be enforce, testing, or none";
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
         if (!$result->max_age) {
             $result->error_message = 'Policy file missing "max_age" field';
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
         if (!is_numeric($result->max_age) || (int)$result->max_age < 0) {
             $result->error_message = "Invalid max_age '{$result->max_age}' - must be a positive number";
             $this->saveRecord($domain, $domainId, $result);
             return $result;
         }
-        
+
         // Step 4: Compare DNS ID with policy ID if present
         if (isset($policyFile['id']) && $result->dns_id !== $policyFile['id']) {
             Log::warning("MTA-STS DNS ID mismatch for {$domain}", [
@@ -124,11 +157,162 @@ class MtaStsService
             // Still valid, but log the warning
             $result->warning = "DNS ID ({$result->dns_id}) does not match policy ID ({$policyFile['id']})";
         }
-        
+
         $result->valid = true;
         $this->saveRecord($domain, $domainId, $result);
+
+        return $result;
+    }
+    /**
+     * Dispatch event to create/update CNAME record for mta-sts.domain
+     *
+     * @param string $domain
+     * @param int|null $domainId
+     * @return array
+     */
+    protected function dispatchCnameCreationEvent(string $domain, ?int $domainId = null): array
+    {
+        $result = [
+            'created' => false,
+            'target' => null,
+            'error' => null
+        ];
+        
+        try {
+            // Get the default CNAME target from settings
+            $defaultTarget = $this->settingsRepository->get('mta_sts_cname_default', '');
+            
+            Log::debug('MTA-STS CNAME settings check', [
+                'domain' => $domain,
+                'default_target' => $defaultTarget,
+                'setting_exists' => $this->settingsRepository->has('mta_sts_cname_default')
+            ]);
+            
+            if (empty($defaultTarget)) {
+                $result['error'] = 'Default MTA-STS CNAME target not configured in settings';
+                Log::error('MTA-STS CNAME creation failed: default target not configured', [
+                    'domain' => $domain,
+                    'setting_key' => 'mta_sts_cname_default'
+                ]);
+                return $result;
+            }
+            
+            $cnameDomain = "mta-sts.{$domain}";
+            $result['target'] = $defaultTarget;
+            
+            // Check if the event class exists
+            if (!class_exists(\App\Events\MtaStsRecordGenerated::class)) {
+                $result['error'] = 'MtaStsRecordGenerated event class not found';
+                Log::warning('MTA-STS CNAME creation skipped: Event class not found');
+                return $result;
+            }
+            
+            // Check if CNAME already exists before creating
+            $existingCname = $this->getDnsCnameRecord($cnameDomain);
+            
+            if ($existingCname && $existingCname['target'] === $defaultTarget) {
+                // CNAME already exists with correct target
+                $result['created'] = true;
+                Log::info('MTA-STS CNAME already exists with correct target', [
+                    'domain' => $cnameDomain,
+                    'target' => $defaultTarget
+                ]);
+                return $result;
+            }
+            
+            // Get the domain model for the event
+            $domainModel = Domain::where('domain', $domain)->first();
+            if (!$domainModel) {
+                $result['error'] = 'Domain not found';
+                Log::error('Domain not found for MTA-STS CNAME', ['domain' => $domain]);
+                return $result;
+            }
+            
+            // Dispatch event to create/update the CNAME
+            Log::info('Dispatching MtaStsRecordGenerated event for CNAME', [
+                'zone' => $domain,
+                'name' => 'mta-sts',
+                'type' => 'CNAME',
+                'content' => $defaultTarget,
+                'is_update' => $existingCname ? true : false,
+                'domain_id' => $domainModel->domain_id
+            ]);
+            
+            // Dispatch the event with the new flexible constructor
+            // Note: We're passing null for MtaSts as this is a CNAME record
+            Event::dispatch(new \App\Events\MtaStsRecordGenerated(
+                mtaSts: null,  // No MTA-STS record for CNAME
+                zone: $domain,
+                name: 'mta-sts',
+                type: 'CNAME',
+                content: $defaultTarget,
+                ttl: 3600,
+                operation: $existingCname ? 'update' : 'create'
+            ));
+            
+            // Log that we dispatched the event
+            Log::info('MTA-STS CNAME creation event dispatched successfully', [
+                'domain' => $cnameDomain,
+                'target' => $defaultTarget,
+                'event_class' => \App\Events\MtaStsRecordGenerated::class
+            ]);
+            
+            // Note: We can't know if the event was successfully processed here
+            // The event listener will handle success/failure and notifications
+            $result['created'] = true; // Assume success, the listener handles errors
+            
+        } catch (\Exception $e) {
+            $result['error'] = $e->getMessage();
+            Log::error('Error dispatching MTA-STS CNAME creation event', [
+                'domain' => $domain,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
         
         return $result;
+    }
+    
+    /**
+     * Get DNS CNAME record for a domain
+     *
+     * @param string $domain
+     * @return array|null
+     */
+    protected function getDnsCnameRecord(string $domain): ?array
+    {
+        try {
+            $result = dns_get_record($domain, DNS_CNAME);
+            
+            if ($result === false || empty($result)) {
+                Log::debug('No CNAME record found', ['domain' => $domain]);
+                return null;
+            }
+            
+            // Return the first CNAME record found
+            foreach ($result as $record) {
+                if (isset($record['target'])) {
+                    Log::debug('Found CNAME record', [
+                        'domain' => $domain,
+                        'target' => $record['target'],
+                        'ttl' => $record['ttl'] ?? 300
+                    ]);
+                    return [
+                        'target' => $record['target'],
+                        'ttl' => $record['ttl'] ?? 300,
+                        'host' => $record['host'] ?? $domain,
+                    ];
+                }
+            }
+            
+            return null;
+            
+        } catch (\Exception $e) {
+            Log::error("Error getting CNAME record for {$domain}", [
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
     
     /**
@@ -557,6 +741,15 @@ class MtaStsService
         if (isset($result->warning)) {
             $rawData['warning'] = $result->warning;
         }
+        // Store CNAME information
+        if ($result->cname_created) {
+            $rawData['cname_created'] = true;
+            $rawData['cname_target'] = $result->cname_target;
+            $rawData['cname_checked_at'] = now()->toDateTimeString();
+        } else {
+            $rawData['cname_created'] = false;
+            $rawData['cname_error'] = $result->error_message ?? 'CNAME creation failed or skipped';
+        }
         $record->raw_data = $rawData;
         
         // Policy file validation
@@ -650,6 +843,76 @@ class MtaStsService
     }
     
     /**
+     * Create MTA-STS CNAME record for a domain
+     * This is a WRITE operation - creates the CNAME record
+     */
+    public function createMtaStsCname(string $domain, ?int $domainId = null): array
+    {
+        $result = [
+            'created' => false,
+            'target' => null,
+            'error' => null
+        ];
+
+        try {
+            // Get the default CNAME target from settings
+            $defaultTarget = $this->settingsRepository->get('mta_sts_cname_default', '');
+
+            if (empty($defaultTarget)) {
+                $result['error'] = 'Default MTA-STS CNAME target not configured in settings';
+                Log::error('MTA-STS CNAME creation failed: default target not configured', [
+                    'domain' => $domain,
+                    'setting_key' => 'mta_sts_cname_default'
+                ]);
+                return $result;
+            }
+
+            $result['target'] = $defaultTarget;
+
+            // Check if the event class exists
+            if (!class_exists(\App\Events\MtaStsRecordGenerated::class)) {
+                $result['error'] = 'MtaStsRecordGenerated event class not found';
+                Log::warning('MTA-STS CNAME creation skipped: Event class not found');
+                return $result;
+            }
+
+            // Dispatch event to create the CNAME
+            Log::info('Creating MTA-STS CNAME via event', [
+                'zone' => $domain,
+                'name' => 'mta-sts',
+                'type' => 'CNAME',
+                'content' => $defaultTarget
+            ]);
+
+            Event::dispatch(new \App\Events\MtaStsRecordGenerated(
+                mtaSts: null,
+                zone: $domain,
+                name: 'mta-sts',
+                type: 'CNAME',
+                content: $defaultTarget,
+                ttl: 3600,
+                operation: 'create'
+            ));
+
+            $result['created'] = true;
+
+            Log::info('MTA-STS CNAME creation event dispatched', [
+                'domain' => $domain,
+                'target' => $defaultTarget
+            ]);
+
+        } catch (\Exception $e) {
+            $result['error'] = $e->getMessage();
+            Log::error('Error creating MTA-STS CNAME', [
+                'domain' => $domain,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return $result;
+    }    
+    
+    /**
      * Get a specific MTA-STS record by domain
      */
     public function getRecord(string $domain): ?MtaStsCheck
@@ -663,5 +926,17 @@ class MtaStsService
     public function getAllRecords(): \Illuminate\Database\Eloquent\Collection
     {
         return MtaStsCheck::all();
+    }
+    
+    /**
+     * Set the settings repository (for testing or dynamic injection)
+     *
+     * @param SettingRepositoryInterface $settingsRepository
+     * @return self
+     */
+    public function setSettingsRepository(SettingRepositoryInterface $settingsRepository): self
+    {
+        $this->settingsRepository = $settingsRepository;
+        return $this;
     }
 }
