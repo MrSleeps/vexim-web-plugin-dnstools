@@ -68,7 +68,17 @@ class MtaStsCheck extends Model
     {
         return $query->where(function ($q) {
             $q->whereNull('checked_at')
-              ->orWhere('next_check_at', '<=', now());
+              ->orWhere('next_check_at', '<=', now())
+              // Also check domains with invalid policies that need re-checking
+              ->orWhere(function ($sub) {
+                  $sub->where('policy_valid', false)
+                      ->whereNotNull('policy_fetched_at');
+              })
+              // Also check domains with invalid DNS that haven't been checked in the last hour
+              ->orWhere(function ($sub) {
+                  $sub->where('dns_valid', false)
+                      ->where('checked_at', '<=', now()->subHour());
+              });
         });
     }
     
