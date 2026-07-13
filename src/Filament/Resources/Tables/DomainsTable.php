@@ -25,6 +25,8 @@ use VEximweb\Core\Data\Repositories\Interfaces\SettingRepositoryInterface;
 use VEximweb\Plugin\DnsTools\Filament\Resources\DnsToolsResource;
 use VEximweb\Plugin\DnsTools\Services\DKIMKeyService;
 use Illuminate\Support\Str;
+use VEximweb\Plugin\DnsTools\Models\MtaStsCheck;
+//use VEximweb\Plugin\MTASTS\Models\MtaStsCheck;
 use VEximweb\Plugin\MTASTS\Models\MtaSts;
 use VEximweb\Plugin\PDNS\Filament\MtaStsFormExtension;
 
@@ -597,118 +599,118 @@ class DomainsTable
                         ->icon('heroicon-o-plus-circle')
                         ->url(fn ($record) => DnsToolsResource::getUrl('generateSpf', ['domain' => $record])),
                     
-                    // UPDATED MTA-STS Action with extension support
-Action::make('createMtaSts')
-    ->label('Create MTA-STS')
-    ->icon('heroicon-o-plus-circle')
-    ->color('success')
-    ->modalHeading(fn ($record) => "Create MTA-STS Record for {$record->domain}")
-    ->modalSubheading(fn ($record) => "Configure MTA-STS policy for {$record->domain}")
-    ->modalWidth('lg')
-    ->form(function ($record) {
-        // Start with extension fields from MtaStsFormExtension
-        $extensionFields = [];
-        
-        // Check if MtaStsFormExtension exists and has components
-        if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'components')) {
-            $extensionFields = MtaStsFormExtension::components($record);
-        }
-        
-        // Base form fields
-        $baseFields = [
-            // Domain ID (hidden)
-            \Filament\Forms\Components\Hidden::make('domain_id')
-                ->default(fn ($record) => $record->domain_id),
-            
-            // Policy Type Dropdown
-            \Filament\Forms\Components\Select::make('policy_type')
-                ->label('Policy Type')
-                ->options([
-                    'none' => 'None (Disabled)',
-                    'testing' => 'Testing (Report Only)',
-                    'enforce' => 'Enforce (Strict)',
-                ])
-                ->required()
-                ->native(false)
-                ->default('testing')
-                ->placeholder('Select policy type')
-                ->helperText('Choose the MTA-STS policy mode for this domain'),
-            
-            // Max Age Input
-            \Filament\Forms\Components\TextInput::make('max_age')
-                ->label('Max Age (seconds)')
-                ->numeric()
-                ->default(86400)
-                ->minValue(1)
-                ->maxValue(31557600)
-                ->required()
-                ->helperText('Default: 86400 (1 day). Max: 31557600 (1 year)')
-                ->suffix('seconds')
-                ->step(1),
-            
-            // Generated ID (auto-generated)
-            \Filament\Forms\Components\Hidden::make('generated_id')
-                ->default(Str::uuid()->toString()),
-        ];
+                Action::make('createMtaSts')
+                    ->label('Create MTA-STS')
+                    ->icon('heroicon-o-plus-circle')
+                    ->color('success')
+                    ->modalHeading(fn ($record) => "Create MTA-STS Record for {$record->domain}")
+                    ->modalSubheading(fn ($record) => "Configure MTA-STS policy for {$record->domain}")
+                    ->modalWidth('lg')
+                    ->form(function ($record) {
+                        // Start with extension fields from MtaStsFormExtension
+                        $extensionFields = [];
 
-        // Merge base fields with extension fields
-        return array_merge($baseFields, $extensionFields);
-    })
-    ->action(function (array $data, $record) {
-        try {
-            // Use updateOrCreate - this handles both creation and update
-            $mtaSts = MtaSts::updateOrCreate(
-                ['domain_id' => $data['domain_id']], // Find by domain_id
-                [ // Update or create with these values
-                    'policy_type' => $data['policy_type'],
-                    'max_age' => $data['max_age'],
-                    'generated_id' => $data['generated_id'],
-                ]
-            );
-            
-            // Check if this was a new record or an update
-            $wasRecentlyCreated = $mtaSts->wasRecentlyCreated;
-            
-            if (isset($data['update_dns']) && $data['update_dns']) {
-                $dnsName = $data['dns_record_name'] ?? '_mta-sts';
-                $dnsContent = $data['dns_record_value'] ?? "v=STSv1; id={$data['generated_id']}";
-                $dnsTtl = $data['dns_ttl'] ?? 3600;
-                
-                event(new \App\Events\MtaStsRecordGenerated(
-                    mtaSts: $mtaSts,
-                    zone: $record->domain,
-                    name: $dnsName,
-                    content: $dnsContent,
-                    ttl: $dnsTtl,
-                    operation: $wasRecentlyCreated ? 'create' : 'update'
-                ));
-            }
-            
-            // Run any save callbacks from extensions
-            if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'onSave')) {
-                MtaStsFormExtension::onSave($mtaSts, $data);
-            }
-            
-            $message = $wasRecentlyCreated 
-                ? "MTA-STS record created for domain: {$record->domain}"
-                : "MTA-STS record updated for domain: {$record->domain}";
-            
-            Notification::make()
-                ->title($wasRecentlyCreated ? 'MTA-STS record created' : 'MTA-STS record updated')
-                ->body($message)
-                ->success()
-                ->send();
-                
-        } catch (\Exception $e) {
-            Notification::make()
-                ->title('Error saving MTA-STS record')
-                ->body($e->getMessage())
-                ->danger()
-                ->send();
-        }
-    })
-    ->modalSubmitActionLabel('Save MTA-STS Record')
-    ->modalCancelActionLabel('Cancel'),
+                        // Check if MtaStsFormExtension exists and has components
+                        if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'components')) {
+                            $extensionFields = MtaStsFormExtension::components($record);
+                        }
+
+                        // Base form fields
+                        $baseFields = [
+                            // Domain ID (hidden)
+                            \Filament\Forms\Components\Hidden::make('domain_id')
+                                ->default(fn ($record) => $record->domain_id),
+
+                            // Policy Type Dropdown
+                            \Filament\Forms\Components\Select::make('policy_type')
+                                ->label('Policy Type')
+                                ->options([
+                                    'none' => 'None (Disabled)',
+                                    'testing' => 'Testing (Report Only)',
+                                    'enforce' => 'Enforce (Strict)',
+                                ])
+                                ->required()
+                                ->native(false)
+                                ->default('testing')
+                                ->placeholder('Select policy type')
+                                ->helperText('Choose the MTA-STS policy mode for this domain'),
+
+                            // Max Age Input
+                            \Filament\Forms\Components\TextInput::make('max_age')
+                                ->label('Max Age (seconds)')
+                                ->numeric()
+                                ->default(86400)
+                                ->minValue(1)
+                                ->maxValue(31557600)
+                                ->required()
+                                ->helperText('Default: 86400 (1 day). Max: 31557600 (1 year)')
+                                ->suffix('seconds')
+                                ->step(1),
+
+                            // Generated ID (auto-generated)
+                            \Filament\Forms\Components\Hidden::make('generated_id')
+                                ->default(Str::uuid()->toString()),
+                        ];
+
+                        // Merge base fields with extension fields
+                        return array_merge($baseFields, $extensionFields);
+                    })
+                    ->action(function (array $data, $record) {
+                        try {
+                            // Use updateOrCreate - this handles both creation and update
+                            //$mtaSts = MtaStsCheck::updateOrCreate(
+                            $mtaSts = MtaSts::updateOrCreate(
+                                ['domain_id' => $data['domain_id']], // Find by domain_id
+                                [ // Update or create with these values
+                                    'policy_type' => $data['policy_type'],
+                                    'max_age' => $data['max_age'],
+                                    'generated_id' => $data['generated_id'],
+                                ]
+                            );
+
+                            // Check if this was a new record or an update
+                            $wasRecentlyCreated = $mtaSts->wasRecentlyCreated;
+
+                            if (isset($data['update_dns']) && $data['update_dns']) {
+                                $dnsName = $data['dns_record_name'] ?? '_mta-sts';
+                                $dnsContent = $data['dns_record_value'] ?? "v=STSv1; id={$data['generated_id']}";
+                                $dnsTtl = $data['dns_ttl'] ?? 3600;
+
+                                event(new \App\Events\MtaStsRecordGenerated(
+                                    mtaSts: $mtaSts,
+                                    zone: $record->domain,
+                                    name: $dnsName,
+                                    content: $dnsContent,
+                                    ttl: $dnsTtl,
+                                    operation: $wasRecentlyCreated ? 'create' : 'update'
+                                ));
+                            }
+
+                            // Run any save callbacks from extensions
+                            if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'onSave')) {
+                                MtaStsFormExtension::onSave($mtaSts, $data);
+                            }
+
+                            $message = $wasRecentlyCreated 
+                                ? "MTA-STS record created for domain: {$record->domain}"
+                                : "MTA-STS record updated for domain: {$record->domain}";
+
+                            Notification::make()
+                                ->title($wasRecentlyCreated ? 'MTA-STS record created' : 'MTA-STS record updated')
+                                ->body($message)
+                                ->success()
+                                ->send();
+
+                        } catch (\Exception $e) {
+                            Notification::make()
+                                ->title('Error saving MTA-STS record')
+                                ->body($e->getMessage())
+                                ->danger()
+                                ->send();
+                        }
+                    })
+                    ->modalSubmitActionLabel('Save MTA-STS Record')
+                    ->modalCancelActionLabel('Cancel'),
                         
                     // DKIM Details Modal
                     Action::make('viewDkim')

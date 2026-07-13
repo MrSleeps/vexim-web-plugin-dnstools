@@ -5,23 +5,15 @@ declare(strict_types=1);
 namespace VEximweb\Plugin\DnsTools\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Schedule; // Add this import!
+use Illuminate\Support\Facades\Schedule;
 use VEximweb\Plugin\DnsTools\Services\DnsToolsService;
 use VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService;
 use Filament\Panel;
-//use VEximweb\Plugin\DnsTools\Filament\Providers\DnsToolsPanelProvider;
 
 class DnsToolsServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        // Merge config
-        /*
-        $this->mergeConfigFrom(
-            __DIR__ . '/../../config/dmarc.php',
-            'dmarc'
-        );
-        */
 
         // Register DMARC record service
         $this->app->singleton('dmarc.record.service', function ($app) {
@@ -59,14 +51,8 @@ class DnsToolsServiceProvider extends ServiceProvider
         // Load migrations
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
 
-        // Load routes
-        // $this->loadRoutesFrom(__DIR__ . '/../../routes/web.php');
-
         // Load views
         $this->loadViewsFrom(__DIR__ . '/../../resources/views', 'dns-tools');
-
-        // Load translations
-        //$this->loadTranslationsFrom(__DIR__ . '/../../resources/lang', 'dns-tools');
         
         // Register commands and schedule
         if ($this->app->runningInConsole()) {
