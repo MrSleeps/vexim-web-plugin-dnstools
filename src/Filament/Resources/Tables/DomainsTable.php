@@ -26,7 +26,6 @@ use VEximweb\Plugin\DnsTools\Filament\Resources\DnsToolsResource;
 use VEximweb\Plugin\DnsTools\Services\DKIMKeyService;
 use Illuminate\Support\Str;
 use VEximweb\Plugin\DnsTools\Models\MtaStsCheck;
-//use VEximweb\Plugin\MTASTS\Models\MtaStsCheck;
 use VEximweb\Plugin\MTASTS\Models\MtaSts;
 use VEximweb\Plugin\PDNS\Filament\MtaStsFormExtension;
 
@@ -511,8 +510,8 @@ class DomainsTable
                                     ->send();
                             }
                         }),
-                    
-                    // Check MTA-STS Action
+
+                    // Check MTA-STS Action (READ-ONLY)
                     Action::make('checkMtaSts')
                         ->label('Check MTA-STS')
                         ->tooltip('Check MTA-STS record now')
@@ -521,11 +520,19 @@ class DomainsTable
                             try {
                                 $service = app(\VEximweb\Plugin\DnsTools\Services\MtaStsService::class);
                                 $result = $service->checkDomain($record->domain, $record->domain_id);
-                                
+
                                 if ($result && $result->valid) {
+                                    $message = "Valid MTA-STS configuration found for {$record->domain}";
+
+                                    if ($result->cname_found) {
+                                        $message .= " CNAME found: {$result->cname_target}";
+                                    } else {
+                                        $message .= " CNAME not found for mta-sts.{$record->domain}";
+                                    }
+
                                     Notification::make()
                                         ->title('MTA-STS check completed')
-                                        ->body("Valid MTA-STS configuration found for {$record->domain}")
+                                        ->body($message)
                                         ->success()
                                         ->send();
                                 } else {
@@ -599,118 +606,210 @@ class DomainsTable
                         ->icon('heroicon-o-plus-circle')
                         ->url(fn ($record) => DnsToolsResource::getUrl('generateSpf', ['domain' => $record])),
                     
-                Action::make('createMtaSts')
-                    ->label('Create MTA-STS')
-                    ->icon('heroicon-o-plus-circle')
-                    ->color('success')
-                    ->modalHeading(fn ($record) => "Create MTA-STS Record for {$record->domain}")
-                    ->modalSubheading(fn ($record) => "Configure MTA-STS policy for {$record->domain}")
-                    ->modalWidth('lg')
-                    ->form(function ($record) {
-                        // Start with extension fields from MtaStsFormExtension
-                        $extensionFields = [];
+                    Action::make('createMtaSts')
+                        ->label('Generate MTA-STS')
+                        ->icon('heroicon-o-plus-circle')
+                        ->color('success')
+                        ->modalHeading(fn ($record) => "Generate MTA-STS Record for {$record->domain}")
+                        ->modalSubheading(fn ($record) => "Configure MTA-STS policy for {$record->domain}")
+                        ->modalWidth('lg')
+                        ->form(function ($record) {
+                            // Start with extension fields from MtaStsFormExtension
+                            $extensionFields = [];
 
-                        // Check if MtaStsFormExtension exists and has components
-                        if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'components')) {
-                            $extensionFields = MtaStsFormExtension::components($record);
-                        }
-
-                        // Base form fields
-                        $baseFields = [
-                            // Domain ID (hidden)
-                            \Filament\Forms\Components\Hidden::make('domain_id')
-                                ->default(fn ($record) => $record->domain_id),
-
-                            // Policy Type Dropdown
-                            \Filament\Forms\Components\Select::make('policy_type')
-                                ->label('Policy Type')
-                                ->options([
-                                    'none' => 'None (Disabled)',
-                                    'testing' => 'Testing (Report Only)',
-                                    'enforce' => 'Enforce (Strict)',
-                                ])
-                                ->required()
-                                ->native(false)
-                                ->default('testing')
-                                ->placeholder('Select policy type')
-                                ->helperText('Choose the MTA-STS policy mode for this domain'),
-
-                            // Max Age Input
-                            \Filament\Forms\Components\TextInput::make('max_age')
-                                ->label('Max Age (seconds)')
-                                ->numeric()
-                                ->default(86400)
-                                ->minValue(1)
-                                ->maxValue(31557600)
-                                ->required()
-                                ->helperText('Default: 86400 (1 day). Max: 31557600 (1 year)')
-                                ->suffix('seconds')
-                                ->step(1),
-
-                            // Generated ID (auto-generated)
-                            \Filament\Forms\Components\Hidden::make('generated_id')
-                                ->default(Str::uuid()->toString()),
-                        ];
-
-                        // Merge base fields with extension fields
-                        return array_merge($baseFields, $extensionFields);
-                    })
-                    ->action(function (array $data, $record) {
-                        try {
-                            // Use updateOrCreate - this handles both creation and update
-                            //$mtaSts = MtaStsCheck::updateOrCreate(
-                            $mtaSts = MtaSts::updateOrCreate(
-                                ['domain_id' => $data['domain_id']], // Find by domain_id
-                                [ // Update or create with these values
-                                    'policy_type' => $data['policy_type'],
-                                    'max_age' => $data['max_age'],
-                                    'generated_id' => $data['generated_id'],
-                                ]
-                            );
-
-                            // Check if this was a new record or an update
-                            $wasRecentlyCreated = $mtaSts->wasRecentlyCreated;
-
-                            if (isset($data['update_dns']) && $data['update_dns']) {
-                                $dnsName = $data['dns_record_name'] ?? '_mta-sts';
-                                $dnsContent = $data['dns_record_value'] ?? "v=STSv1; id={$data['generated_id']}";
-                                $dnsTtl = $data['dns_ttl'] ?? 3600;
-
-                                event(new \App\Events\MtaStsRecordGenerated(
-                                    mtaSts: $mtaSts,
-                                    zone: $record->domain,
-                                    name: $dnsName,
-                                    content: $dnsContent,
-                                    ttl: $dnsTtl,
-                                    operation: $wasRecentlyCreated ? 'create' : 'update'
-                                ));
+                            // Check if MtaStsFormExtension exists and has components
+                            if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'components')) {
+                                $extensionFields = MtaStsFormExtension::components($record);
                             }
 
-                            // Run any save callbacks from extensions
-                            if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'onSave')) {
-                                MtaStsFormExtension::onSave($mtaSts, $data);
+                            // Base form fields
+                            $baseFields = [
+                                // Domain ID (hidden)
+                                \Filament\Forms\Components\Hidden::make('domain_id')
+                                    ->default(fn ($record) => $record->domain_id),
+
+                                // Policy Type Dropdown
+                                \Filament\Forms\Components\Select::make('policy_type')
+                                    ->label('Policy Type')
+                                    ->options([
+                                        'none' => 'None (Disabled)',
+                                        'testing' => 'Testing (Report Only)',
+                                        'enforce' => 'Enforce (Strict)',
+                                    ])
+                                    ->required()
+                                    ->native(false)
+                                    ->default('testing')
+                                    ->placeholder('Select policy type')
+                                    ->helperText('Choose the MTA-STS policy mode for this domain'),
+
+                                // Max Age Input
+                                \Filament\Forms\Components\TextInput::make('max_age')
+                                    ->label('Max Age (seconds)')
+                                    ->numeric()
+                                    ->default(86400)
+                                    ->minValue(1)
+                                    ->maxValue(31557600)
+                                    ->required()
+                                    ->helperText('Default: 86400 (1 day). Max: 31557600 (1 year)')
+                                    ->suffix('seconds')
+                                    ->step(1),
+
+                                // Generated ID (auto-generated)
+                                \Filament\Forms\Components\Hidden::make('generated_id')
+                                    ->default(Str::uuid()->toString()),
+
+                                // Option to create CNAME
+                                \Filament\Forms\Components\Checkbox::make('create_cname')
+                                    ->label('Create CNAME record for mta-sts subdomain')
+                                    ->helperText('Create a CNAME record for mta-sts.' . ($record->domain ?? 'domain') . ' pointing to the default MTA-STS provider')
+                                    ->default(true),
+                            ];
+
+                            // Merge base fields with extension fields
+                            return array_merge($baseFields, $extensionFields);
+                        })
+                        ->action(function (array $data, $record) {
+                            try {
+                                // Use updateOrCreate - this handles both creation and update
+                                $mtaSts = MtaSts::updateOrCreate(
+                                    ['domain_id' => $data['domain_id']], // Find by domain_id
+                                    [ // Update or create with these values
+                                        'policy_type' => $data['policy_type'],
+                                        'max_age' => $data['max_age'],
+                                        'generated_id' => $data['generated_id'],
+                                    ]
+                                );
+
+                                // Check if this was a new record or an update
+                                $wasRecentlyCreated = $mtaSts->wasRecentlyCreated;
+
+                                // CREATE TXT RECORD (_mta-sts)
+                                if (isset($data['update_dns']) && $data['update_dns']) {
+                                    $dnsName = $data['dns_record_name'] ?? '_mta-sts';
+                                    $dnsContent = $data['dns_record_value'] ?? "v=STSv1; id={$data['generated_id']}";
+                                    $dnsTtl = $data['dns_ttl'] ?? 3600;
+
+                                    event(new \App\Events\MtaStsRecordGenerated(
+                                        mtaSts: $mtaSts,
+                                        zone: $record->domain,
+                                        type: "TXT",
+                                        name: $dnsName,
+                                        content: $dnsContent,
+                                        ttl: $dnsTtl,
+                                        operation: $wasRecentlyCreated ? 'create' : 'update'
+                                    ));
+                                }
+
+                                // CREATE CNAME RECORD (mta-sts)
+                                if (isset($data['create_cname']) && $data['create_cname']) {
+                                    try {
+                                        // Clear the cache first
+                                        \VEximweb\Core\Data\Models\Setting::clearCache();
+
+                                        // Get the setting value
+                                        $cnameTarget = \VEximweb\Core\Data\Models\Setting::get('mta_sts_cname_default', '');
+
+                                        \Log::debug('MTA-STS CNAME setting debug', [
+                                            'domain' => $record->domain,
+                                            'raw_target' => $cnameTarget,
+                                            'is_empty' => empty($cnameTarget)
+                                        ]);
+
+                                        if (!empty($cnameTarget)) {
+                                            // Format the CNAME target properly
+                                            // Remove any trailing dot if exists, then add it back
+                                            $cnameTarget = rtrim($cnameTarget, '.');
+
+                                            // PowerDNS expects the target to be a fully qualified domain name
+                                            // with a trailing dot to indicate it's an FQDN
+                                            $formattedTarget = $cnameTarget . '.';
+
+                                            \Log::info('Creating MTA-STS CNAME from createMtaSts action', [
+                                                'domain' => $record->domain,
+                                                'original_target' => $cnameTarget,
+                                                'formatted_target' => $formattedTarget
+                                            ]);
+
+                                            event(new \App\Events\MtaStsRecordGenerated(
+                                                mtaSts: null,
+                                                zone: $record->domain,
+                                                type: "CNAME",
+                                                name: 'mta-sts',
+                                                content: $formattedTarget, // Use the formatted target with trailing dot
+                                                ttl: 3600,
+                                                operation: 'create'
+                                            ));
+
+                                            \Log::info('MTA-STS CNAME event dispatched from createMtaSts action', [
+                                                'domain' => $record->domain,
+                                                'target' => $formattedTarget
+                                            ]);
+
+                                            Notification::make()
+                                                ->title('CNAME Created')
+                                                ->body("CNAME record for mta-sts.{$record->domain} will be created pointing to {$formattedTarget}")
+                                                ->success()
+                                                ->send();
+                                        } else {
+                                            \Log::warning('MTA-STS CNAME not created: default target not configured', [
+                                                'domain' => $record->domain
+                                            ]);
+
+                                            Notification::make()
+                                                ->title('CNAME Not Created')
+                                                ->body('MTA-STS CNAME default target is not configured in settings (key: mta_sts_cname_default).')
+                                                ->warning()
+                                                ->send();
+                                        }
+                                    } catch (\Exception $e) {
+                                        \Log::error('Failed to dispatch MTA-STS CNAME event from createMtaSts', [
+                                            'domain' => $record->domain,
+                                            'error' => $e->getMessage(),
+                                            'trace' => $e->getTraceAsString()
+                                        ]);
+
+                                        Notification::make()
+                                            ->title('CNAME Creation Failed')
+                                            ->body('MTA-STS CNAME could not be created: ' . $e->getMessage())
+                                            ->warning()
+                                            ->send();
+                                    }
+                                }
+
+                                // Run any save callbacks from extensions
+                                if (class_exists(MtaStsFormExtension::class) && method_exists(MtaStsFormExtension::class, 'onSave')) {
+                                    MtaStsFormExtension::onSave($mtaSts, $data);
+                                }
+
+                                $message = $wasRecentlyCreated 
+                                    ? "MTA-STS record created for domain: {$record->domain}"
+                                    : "MTA-STS record updated for domain: {$record->domain}";
+
+                                if (isset($data['create_cname']) && $data['create_cname']) {
+                                    $message .= " CNAME record for mta-sts.{$record->domain} also created.";
+                                }
+
+                                Notification::make()
+                                    ->title($wasRecentlyCreated ? 'MTA-STS record created' : 'MTA-STS record updated')
+                                    ->body($message)
+                                    ->success()
+                                    ->send();
+
+                            } catch (\Exception $e) {
+                                \Log::error('Error saving MTA-STS record', [
+                                    'domain' => $record->domain,
+                                    'error' => $e->getMessage()
+                                ]);
+
+                                Notification::make()
+                                    ->title('Error saving MTA-STS record')
+                                    ->body($e->getMessage())
+                                    ->danger()
+                                    ->send();
                             }
-
-                            $message = $wasRecentlyCreated 
-                                ? "MTA-STS record created for domain: {$record->domain}"
-                                : "MTA-STS record updated for domain: {$record->domain}";
-
-                            Notification::make()
-                                ->title($wasRecentlyCreated ? 'MTA-STS record created' : 'MTA-STS record updated')
-                                ->body($message)
-                                ->success()
-                                ->send();
-
-                        } catch (\Exception $e) {
-                            Notification::make()
-                                ->title('Error saving MTA-STS record')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
-                        }
-                    })
-                    ->modalSubmitActionLabel('Save MTA-STS Record')
-                    ->modalCancelActionLabel('Cancel'),
+                        })
+                        ->modalSubmitActionLabel('Save MTA-STS Record')
+                        ->modalCancelActionLabel('Cancel'),
                         
                     // DKIM Details Modal
                     Action::make('viewDkim')

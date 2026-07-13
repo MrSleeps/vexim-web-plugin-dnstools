@@ -24,6 +24,8 @@ return new class extends Migration
                 ]);
                 
                 Log::info('MTA-STS CNAME default setting created successfully');
+                
+                Setting::clearCache();
             } else {
                 Log::info('MTA-STS CNAME default setting already exists, skipping creation');
             }
