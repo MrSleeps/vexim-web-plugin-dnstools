@@ -50,6 +50,7 @@ class MtaStsService
             'error_message' => null,
             'cname_found' => false,
             'cname_target' => null,
+            'warning' => null,
         ];
 
         // Step 1: Check DNS TXT record for _mta-sts
@@ -712,85 +713,85 @@ class MtaStsService
     /**
      * Save or update the MTA-STS record
      */
-    protected function saveRecord(string $domain, ?int $domainId, object $result): void
-    {
-        $record = MtaStsCheck::firstOrNew(['domain' => $domain]);
-        
-        $record->domain_id = $domainId ?? $record->domain_id;
-        $record->checked_at = now();
-        
-        // Calculate next check based on TTL or default
-        $ttl = $result->dns_ttl ?? 300;
-        $record->next_check_at = now()->addSeconds(min($ttl * 2, 86400)); // Max 24 hours
-        
-        // DNS record data
-        $record->dns_valid = $result->dns_record_found && $result->valid;
-        $record->dns_policy = $result->dns_record;
-        $record->dns_mode = $result->mode;  // From policy file
-        $record->dns_max_age = $result->max_age;  // From policy file
-        $record->dns_mx = $result->mx_record ? implode(',', (array)$result->mx_record) : null;
-        
-        // Store DNS ID and TTL in raw_data
-        $rawData = $record->raw_data ?? [];
-        if ($result->dns_id) {
-            $rawData['dns_id'] = $result->dns_id;
-        }
-        if ($result->dns_ttl) {
-            $rawData['dns_ttl'] = $result->dns_ttl;
-        }
-        if (isset($result->warning)) {
-            $rawData['warning'] = $result->warning;
-        }
-        // Store CNAME information
-        if ($result->cname_created) {
-            $rawData['cname_created'] = true;
-            $rawData['cname_target'] = $result->cname_target;
-            $rawData['cname_checked_at'] = now()->toDateTimeString();
-        } else {
-            $rawData['cname_created'] = false;
-            $rawData['cname_error'] = $result->error_message ?? 'CNAME creation failed or skipped';
-        }
-        $record->raw_data = $rawData;
-        
-        // Policy file validation
-        $record->policy_valid = $result->policy_found && $result->valid;
-        if ($result->policy_found) {
-            $record->policy_fetched_at = now();
-            $record->policy_data = [
-                'mode' => $result->mode,
-                'max_age' => $result->max_age,
-                'mx' => $result->mx_record,
-            ];
-        }
-        
-        // Calculate expiry based on max_age from policy file
-        if ($result->max_age && is_numeric($result->max_age) && $result->valid) {
-            $record->dns_expires_at = now()->addSeconds((int)$result->max_age);
-        } else {
-            $record->dns_expires_at = null;
-        }
-        
-        $record->error_message = $result->error_message;
-        
-        // If we have a policy file and MX records, validate them
-        if ($result->policy_found && $result->valid && $result->mx_record) {
-            $policy = [
-                'version' => 'STSv1',
-                'mode' => $result->mode,
-                'max_age' => $result->max_age,
-                'mx' => (array)$result->mx_record,
-            ];
-            $mxCheck = $this->validateMxAgainstPolicy($domain, $policy);
-            $record->mx_mismatch = !$mxCheck['valid'];
-            $record->mx_validation_details = $mxCheck;
-        } else {
-            $record->mx_mismatch = false;
-            $record->mx_validation_details = null;
-        }
-        
-        $record->save();
+protected function saveRecord(string $domain, ?int $domainId, object $result): void
+{
+    $record = MtaStsCheck::firstOrNew(['domain' => $domain]);
+    
+    $record->domain_id = $domainId ?? $record->domain_id;
+    $record->checked_at = now();
+    
+    // Calculate next check based on TTL or default
+    $ttl = $result->dns_ttl ?? 300;
+    $record->next_check_at = now()->addSeconds(min($ttl * 2, 86400)); // Max 24 hours
+    
+    // DNS record data
+    $record->dns_valid = $result->dns_record_found && $result->valid;
+    $record->dns_policy = $result->dns_record;
+    $record->dns_mode = $result->mode;  // From policy file
+    $record->dns_max_age = $result->max_age;  // From policy file
+    $record->dns_mx = $result->mx_record ? implode(',', (array)$result->mx_record) : null;
+    
+    // Store DNS ID and TTL in raw_data
+    $rawData = $record->raw_data ?? [];
+    if ($result->dns_id) {
+        $rawData['dns_id'] = $result->dns_id;
     }
-
+    if ($result->dns_ttl) {
+        $rawData['dns_ttl'] = $result->dns_ttl;
+    }
+    if (isset($result->warning)) {
+        $rawData['warning'] = $result->warning;
+    }
+    
+    // Store CNAME information from the check
+    if (isset($result->cname_found)) {
+        $rawData['cname_found'] = $result->cname_found;
+        if ($result->cname_found && isset($result->cname_target)) {
+            $rawData['cname_target'] = $result->cname_target;
+        }
+        $rawData['cname_checked_at'] = now()->toDateTimeString();
+    }
+    
+    $record->raw_data = $rawData;
+    
+    // Policy file validation
+    $record->policy_valid = $result->policy_found && $result->valid;
+    if ($result->policy_found) {
+        $record->policy_fetched_at = now();
+        $record->policy_data = [
+            'mode' => $result->mode,
+            'max_age' => $result->max_age,
+            'mx' => $result->mx_record,
+        ];
+    }
+    
+    // Calculate expiry based on max_age from policy file
+    if ($result->max_age && is_numeric($result->max_age) && $result->valid) {
+        $record->dns_expires_at = now()->addSeconds((int)$result->max_age);
+    } else {
+        $record->dns_expires_at = null;
+    }
+    
+    $record->error_message = $result->error_message;
+    
+    // If we have a policy file and MX records, validate them
+    if ($result->policy_found && $result->valid && $result->mx_record) {
+        $policy = [
+            'version' => 'STSv1',
+            'mode' => $result->mode,
+            'max_age' => $result->max_age,
+            'mx' => (array)$result->mx_record,
+        ];
+        $mxCheck = $this->validateMxAgainstPolicy($domain, $policy);
+        $record->mx_mismatch = !$mxCheck['valid'];
+        $record->mx_validation_details = $mxCheck;
+    } else {
+        $record->mx_mismatch = false;
+        $record->mx_validation_details = null;
+    }
+    
+    $record->save();
+}
     /**
      * Create or update an MTA-STS record in the database
      */
