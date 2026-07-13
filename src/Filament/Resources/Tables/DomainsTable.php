@@ -511,7 +511,7 @@ class DomainsTable
                             }
                         }),
 
-                    // Check MTA-STS Action (READ-ONLY)
+                    // Check MTA-STS Action
                     Action::make('checkMtaSts')
                         ->label('Check MTA-STS')
                         ->tooltip('Check MTA-STS record now')
@@ -522,31 +522,62 @@ class DomainsTable
                                 $result = $service->checkDomain($record->domain, $record->domain_id);
 
                                 if ($result && $result->valid) {
-                                    $message = "Valid MTA-STS configuration found for {$record->domain}";
+                                    $message = "Valid MTA-STS configuration found for {$record->domain}\n";
+                                    $message .= "Mode: {$result->mode}\n";
+                                    $message .= "Max Age: {$result->max_age} seconds\n";
+                                    $message .= "DNS Record: {$result->dns_record}\n";
 
-                                    if ($result->cname_found) {
-                                        $message .= " CNAME found: {$result->cname_target}";
+                                    // Check CNAME
+                                    if (isset($result->cname_found) && $result->cname_found) {
+                                        $message .= "CNAME found: mta-sts.{$record->domain} -> {$result->cname_target}\n";
                                     } else {
-                                        $message .= " CNAME not found for mta-sts.{$record->domain}";
+                                        $message .= "⚠️ CNAME not found for mta-sts.{$record->domain}\n";
+                                    }
+
+                                    // Check MX records
+                                    if (isset($result->mx_record) && $result->mx_record) {
+                                        $message .= "MX Records in policy: " . implode(', ', (array)$result->mx_record) . "\n";
                                     }
 
                                     Notification::make()
-                                        ->title('MTA-STS check completed')
+                                        ->title('MTA-STS Check Completed')
                                         ->body($message)
                                         ->success()
+                                        ->duration(10000)
                                         ->send();
                                 } else {
                                     $error = $result ? $result->error_message : 'Unknown error';
+
+                                    $message = "No valid MTA-STS configuration found for {$record->domain}\n";
+                                    $message .= "Error: {$error}\n";
+
+                                    // Check if DNS record exists but policy is missing
+                                    if ($result && isset($result->dns_record_found) && $result->dns_record_found) {
+                                        $message .= "DNS record found but policy validation failed.\n";
+                                    }
+
+                                    // Check CNAME
+                                    if ($result && isset($result->cname_found) && $result->cname_found) {
+                                        $message .= "CNAME found: mta-sts.{$record->domain} -> {$result->cname_target}\n";
+                                    }
+
                                     Notification::make()
-                                        ->title('MTA-STS check completed')
-                                        ->body("No valid MTA-STS for {$record->domain}: {$error}")
+                                        ->title('MTA-STS Check Completed')
+                                        ->body($message)
                                         ->warning()
+                                        ->duration(10000)
                                         ->send();
                                 }
                             } catch (\Exception $e) {
+                                \Log::error('MTA-STS check failed', [
+                                    'domain' => $record->domain,
+                                    'error' => $e->getMessage(),
+                                    'trace' => $e->getTraceAsString()
+                                ]);
+
                                 Notification::make()
-                                    ->title('MTA-STS check failed')
-                                    ->body($e->getMessage())
+                                    ->title('MTA-STS Check Failed')
+                                    ->body('Error checking MTA-STS for ' . $record->domain . ': ' . $e->getMessage())
                                     ->danger()
                                     ->send();
                             }
