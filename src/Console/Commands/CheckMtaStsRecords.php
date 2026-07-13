@@ -15,7 +15,8 @@ class CheckMtaStsRecords extends Command
                             {--stats : Show MTA-STS statistics}
                             {--fetch : Fetch and validate the .well-known/mta-sts.txt file}
                             {--mx-check : Compare MX records against the policy file}
-                            {--domain-id= : Domain ID for the record (optional, will be auto-detected)}';
+                            {--domain-id= : Domain ID for the record (optional, will be auto-detected)}
+                            {--debug : Show debug information}';
     
     protected $description = 'Check MTA-STS records for domains';
     
@@ -38,8 +39,45 @@ class CheckMtaStsRecords extends Command
         
         // Default: check domains that need updating
         $this->info('Checking domains that need MTA-STS updates...');
+        
+        // Debug: Show what domains exist
+        if ($this->option('debug')) {
+            $this->showDebugInfo();
+        }
+        
         $count = $service->checkDomainsNeedingUpdate();
         $this->info("Done! Checked {$count} domains.");
+    }
+    
+    protected function showDebugInfo(): void
+    {
+        $this->line("");
+        $this->info("Debug Information:");
+        
+        $totalDomains = Domain::where('enabled', true)->count();
+        $this->line("  Total enabled domains: {$totalDomains}");
+        
+        $existingRecords = MtaStsCheck::count();
+        $this->line("  Existing MTA-STS records: {$existingRecords}");
+        
+        $needsUpdate = MtaStsCheck::needsUpdate()->count();
+        $this->line("  Records needing update: {$needsUpdate}");
+        
+        $domainsWithoutRecord = Domain::where('enabled', true)
+            ->whereNotIn('domain', MtaStsCheck::pluck('domain')->toArray())
+            ->count();
+        $this->line("  Domains without any record: {$domainsWithoutRecord}");
+        
+        // Show first 5 domains
+        $domains = Domain::where('enabled', true)->limit(5)->get();
+        $this->line("");
+        $this->line("  First 5 enabled domains:");
+        foreach ($domains as $domain) {
+            $hasRecord = MtaStsCheck::where('domain', $domain->domain)->exists();
+            $this->line("    - {$domain->domain} (domain_id: {$domain->domain_id})" . ($hasRecord ? " ✓ has record" : " ✗ no record"));
+        }
+        
+        $this->line("");
     }
     
     protected function showStats(MtaStsService $service): void
@@ -134,7 +172,7 @@ class CheckMtaStsRecords extends Command
         $record = MtaStsCheck::where('domain', $domain)->first();
         
         if ($result && $result->valid) {
-            $this->info("✅ MTA-STS DNS record found!");
+            $this->info("MTA-STS DNS record found!");
             $this->line("");
             $this->line("  DNS Record: {$result->dns_record}");
             $this->line("  DNS ID: {$result->dns_id}");
@@ -148,7 +186,7 @@ class CheckMtaStsRecords extends Command
             // Show expiry status
             if ($record && $record->dns_expires_at) {
                 if ($record->isExpired()) {
-                    $this->warn("  ⚠️  Policy is EXPIRED (since {$record->dns_expires_at->diffForHumans()})");
+                    $this->warn("  Policy is EXPIRED (since {$record->dns_expires_at->diffForHumans()})");
                 } else {
                     $this->line("  Policy expires: {$record->dns_expires_at->diffForHumans()}");
                 }
@@ -160,7 +198,7 @@ class CheckMtaStsRecords extends Command
                 $policyFile = $service->fetchPolicyFile($domain);
                 
                 if ($policyFile) {
-                    $this->info("✅ Policy file found!");
+                    $this->info("Policy file found!");
                     $this->line("");
                     $this->line("  Version: {$policyFile['version']}");
                     $this->line("  Mode: {$policyFile['mode']}");
@@ -178,9 +216,9 @@ class CheckMtaStsRecords extends Command
                             $this->info("MX Record Validation:");
                             
                             if ($mxCheck['valid']) {
-                                $this->info("  ✅ All MX records match the policy file!");
+                                $this->info("  All MX records match the policy file!");
                             } else {
-                                $this->error("  ❌ MX mismatch detected!");
+                                $this->error("  MX mismatch detected!");
                                 $this->line("  MX records in DNS: " . implode(', ', $mxCheck['dns_mx'] ?? []));
                                 $this->line("  MX records in policy: " . implode(', ', $mxCheck['policy_mx'] ?? []));
                                 
@@ -194,12 +232,12 @@ class CheckMtaStsRecords extends Command
                         }
                     }
                 } else {
-                    $this->error("❌ Could not fetch policy file");
+                    $this->error("Could not fetch policy file");
                     $this->line("  Policy file should be at: https://mta-sts.{$domain}/.well-known/mta-sts.txt");
                 }
             }
         } else {
-            $this->error("❌ No valid MTA-STS record found");
+            $this->error("No valid MTA-STS record found");
             if ($result) {
                 $this->line("  Error: {$result->error_message}");
                 $this->line("  Raw DNS record: " . ($result->dns_record ?? 'Not found'));
@@ -277,7 +315,7 @@ class CheckMtaStsRecords extends Command
             if ($mismatches > 0) {
                 $this->warn("Mismatches found: {$mismatches}");
             } else {
-                $this->info("No mismatches found! ✅");
+                $this->info("No mismatches found!");
             }
         }
     }
