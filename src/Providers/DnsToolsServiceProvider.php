@@ -7,6 +7,7 @@ namespace VEximweb\Plugin\DnsTools\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Schedule;
 use VEximweb\Plugin\DnsTools\Services\DnsToolsService;
+use VEximweb\Plugin\DnsTools\Services\DirectDnsResolver;
 use VEximweb\Plugin\DnsTools\Dmarc\Services\DmarcCheckService;
 use Filament\Panel;
 
@@ -14,6 +15,14 @@ class DnsToolsServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->mergeConfigFrom(__DIR__ . '/../../config/dns-tools.php', 'dns-tools');
+
+        $this->app->singleton(DirectDnsResolver::class, function () {
+            return new DirectDnsResolver(
+                config('dns-tools.nameservers', ['1.1.1.1', '1.0.0.1']),
+                (float) config('dns-tools.timeout', 5.0),
+            );
+        });
 
         // Register DMARC record service
         $this->app->singleton('dmarc.record.service', function ($app) {
@@ -47,6 +56,10 @@ class DnsToolsServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__ . '/../../config/dmarc.php' => config_path('dmarc.php'),
         ], 'dmarc-config');
+
+        $this->publishes([
+            __DIR__ . '/../../config/dns-tools.php' => config_path('dns-tools.php'),
+        ], 'dns-tools-config');
 
         // Load migrations
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
