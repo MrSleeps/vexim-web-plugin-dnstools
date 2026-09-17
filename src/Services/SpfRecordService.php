@@ -6,6 +6,7 @@ use SPFLib\Record;
 use SPFLib\Term\Mechanism;
 use SPFLib\Term\Modifier;
 use SPFLib\SemanticValidator;
+use SPFLib\Semantic\Issue as SemanticIssue;
 use SPFLib\Decoder;
 use SPFLib\Exception;
 use SPFLib\Exception\InvalidTermException;
@@ -260,11 +261,7 @@ class SpfRecordService
             
             $formattedIssues = [];
             foreach ($issues as $issue) {
-                $formattedIssues[] = [
-                    'level' => $issue->getLevel(),
-                    'message' => $issue->getMessage(),
-                    'term' => $issue->getTerm() ? (string) $issue->getTerm() : null,
-                ];
+                $formattedIssues[] = $this->formatSemanticIssue($issue);
             }
             
             return $formattedIssues;
@@ -279,6 +276,30 @@ class SpfRecordService
         }
     }
     
+    /**
+     * Convert an SPFLib semantic issue into the shape used by the UI.
+     *
+     * SPFLib 3.x exposes numeric levels and getDescription(); it does not
+     * provide getMessage() or getTerm() on semantic issues.
+     *
+     * @return array{level: string, message: string, term: null}
+     */
+    protected function formatSemanticIssue(SemanticIssue $issue): array
+    {
+        $level = match ($issue->getLevel()) {
+            SemanticIssue::LEVEL_NOTICE => 'notice',
+            SemanticIssue::LEVEL_WARNING => 'warning',
+            SemanticIssue::LEVEL_FATAL => 'fatal',
+            default => (string) $issue->getLevel(),
+        };
+
+        return [
+            'level' => $level,
+            'message' => $issue->getDescription(),
+            'term' => null,
+        ];
+    }
+
     /**
      * Count the number of DNS lookups in the SPF record
      *
@@ -753,18 +774,14 @@ class SpfRecordService
             $validationIssues = $validator->validate($record);
             
             foreach ($validationIssues as $issue) {
-                $result['validation_issues'][] = [
-                    'level' => $issue->getLevel(),
-                    'message' => $issue->getMessage(),
-                    'term' => $issue->getTerm() ? (string) $issue->getTerm() : null,
-                ];
+                $result['validation_issues'][] = $this->formatSemanticIssue($issue);
             }
-            
-            // Syntax/semantic validity is determined by critical parser issues, not by
+
+            // Syntax/semantic validity is determined by fatal semantic issues, not by
             // the presence of an explicit "all" mechanism. RFC 7208 also permits
             // redirect= termination, and otherwise defines an implicit neutral result.
             $criticalIssues = array_filter($validationIssues, function ($issue) {
-                return $issue->getLevel() === 'error' || $issue->getLevel() === 'fatal';
+                return $issue->getLevel() === SemanticIssue::LEVEL_FATAL;
             });
 
             $result['valid'] = empty($criticalIssues);
