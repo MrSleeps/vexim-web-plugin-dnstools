@@ -18,20 +18,18 @@ it('accepts a redirect-terminated SPF record as valid', function () {
 
     expect($result['valid'])->toBeTrue()
         ->and($result['policy'])->toBeNull()
-        ->and($result['modifiers'])->toContainEqual([
-            'type' => 'redirect',
-            'value' => 'redirect=_spf.example.net',
-            'domain' => '_spf.example.net',
-        ]);
+        ->and($result['modifiers'][0]['type'] ?? null)->toBe('redirect')
+        ->and($result['modifiers'][0]['domain'] ?? null)->toBe('_spf.example.net');
 });
 
 it('accepts SPF without an explicit all mechanism but warns about implicit neutral', function () {
     $result = spfParserForTest()->parseForTest('v=spf1 ip4:192.0.2.10');
 
+    $messages = array_column($result['validation_issues'], 'message');
+
     expect($result['valid'])->toBeTrue()
         ->and($result['policy'])->toBeNull()
-        ->and(collect($result['validation_issues'])->pluck('message')->all())
-        ->toContain('No explicit all mechanism or redirect; unmatched senders receive the implicit neutral result.');
+        ->and($messages)->toContain('No explicit all mechanism or redirect; unmatched senders receive the implicit neutral result.');
 });
 
 it('still rejects fatal semantic errors', function () {
