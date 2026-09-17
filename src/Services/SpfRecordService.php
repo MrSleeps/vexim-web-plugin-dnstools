@@ -20,10 +20,13 @@ use IPLib\Address\IPv6;
 class SpfRecordService
 {
     protected $decoder;
-    
-    public function __construct()
+
+    protected DirectDnsResolver $dnsResolver;
+
+    public function __construct(?DirectDnsResolver $dnsResolver = null)
     {
         $this->decoder = new Decoder();
+        $this->dnsResolver = $dnsResolver ?? new DirectDnsResolver();
     }
     
     /**
@@ -616,21 +619,9 @@ class SpfRecordService
      */
     protected function getDnsSpfRecord(string $domain): ?string
     {
-        $records = dns_get_record($domain, DNS_TXT);
-
-        if ($records === false) {
-            return null;
-        }
-
         $spfRecords = [];
 
-        foreach ($records as $record) {
-            $txt = $record['txt'] ?? (isset($record['entries']) ? implode('', $record['entries']) : null);
-
-            if (! is_string($txt)) {
-                continue;
-            }
-
+        foreach ($this->dnsResolver->txt($domain) as $txt) {
             $txt = trim($txt);
 
             if (preg_match('/^v=spf1(?:\\s|$)/i', $txt) === 1) {
@@ -639,7 +630,7 @@ class SpfRecordService
         }
 
         if (count($spfRecords) > 1) {
-            throw new \RuntimeException('Multiple SPF records found for domain');
+            throw new \\RuntimeException('Multiple SPF records found for domain');
         }
 
         return $spfRecords[0] ?? null;
