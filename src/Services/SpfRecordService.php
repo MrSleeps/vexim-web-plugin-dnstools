@@ -639,7 +639,7 @@ class SpfRecordService
         }
 
         if (count($spfRecords) > 1) {
-            throw new \\RuntimeException('Multiple SPF records found for domain');
+            throw new \RuntimeException('Multiple SPF records found for domain');
         }
 
         return $spfRecords[0] ?? null;
