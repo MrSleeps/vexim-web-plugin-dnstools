@@ -521,12 +521,15 @@ class SpfRecordService
      * @param string $domain
      * @return SpfCheck|null
      */
-    public function checkDomain(string $domain): ?SpfCheck
+    public function checkDomain(string $domain, bool $forceRefresh = false): ?SpfCheck
     {
         try {
-            // Check if we have a recent cached result
+            // Check if we have a recent cached result unless a manual refresh was requested.
             $cacheKey = 'spf_check_' . md5($domain);
-            if (Cache::has($cacheKey)) {
+
+            if ($forceRefresh) {
+                Cache::forget($cacheKey);
+            } elseif (Cache::has($cacheKey)) {
                 $cached = Cache::get($cacheKey);
                 // Verify we got a valid object
                 if ($cached instanceof SpfCheck) {
@@ -614,16 +617,34 @@ class SpfRecordService
     protected function getDnsSpfRecord(string $domain): ?string
     {
         $records = dns_get_record($domain, DNS_TXT);
-        
+
+        if ($records === false) {
+            return null;
+        }
+
+        $spfRecords = [];
+
         foreach ($records as $record) {
-            if (isset($record['txt']) && str_starts_with($record['txt'], 'v=spf1')) {
-                return $record['txt'];
+            $txt = $record['txt'] ?? (isset($record['entries']) ? implode('', $record['entries']) : null);
+
+            if (! is_string($txt)) {
+                continue;
+            }
+
+            $txt = trim($txt);
+
+            if (preg_match('/^v=spf1(?:\\s|$)/i', $txt) === 1) {
+                $spfRecords[] = $txt;
             }
         }
-        
-        return null;
+
+        if (count($spfRecords) > 1) {
+            throw new \\RuntimeException('Multiple SPF records found for domain');
+        }
+
+        return $spfRecords[0] ?? null;
     }
-    
+
     /**
      * Parse and validate an SPF record using the Decoder
      *
@@ -748,10 +769,26 @@ class SpfRecordService
                 ];
             }
             
-            // Check if record is valid (has all mechanism and no critical issues)
-            $result['valid'] = !empty($result['policy']) && empty(array_filter($validationIssues, function($issue) {
+            // Syntax/semantic validity is determined by critical parser issues, not by
+            // the presence of an explicit "all" mechanism. RFC 7208 also permits
+            // redirect= termination, and otherwise defines an implicit neutral result.
+            $criticalIssues = array_filter($validationIssues, function ($issue) {
                 return $issue->getLevel() === 'error' || $issue->getLevel() === 'fatal';
+            });
+
+            $result['valid'] = empty($criticalIssues);
+
+            $hasRedirect = ! empty(array_filter($result['modifiers'], function (array $modifier): bool {
+                return ($modifier['type'] ?? null) === 'redirect';
             }));
+
+            if ($result['valid'] && empty($result['policy']) && ! $hasRedirect) {
+                $result['validation_issues'][] = [
+                    'level' => 'warning',
+                    'message' => 'No explicit all mechanism or redirect; unmatched senders receive the implicit neutral result.',
+                    'term' => null,
+                ];
+            }
             
         } catch (Exception $e) {
             $result['validation_issues'][] = [
