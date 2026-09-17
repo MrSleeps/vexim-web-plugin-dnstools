@@ -486,7 +486,7 @@ class DomainsTable
                         ->action(function ($record) {
                             try {
                                 $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
-                                $result = $service->checkDomain($record->domain);
+                                $result = $service->checkDomain($record->domain, true);
                                 
                                 if ($result && $result->valid) {
                                     Notification::make()
@@ -948,7 +948,7 @@ class DomainsTable
                                 ->label('Check Again')
                                 ->action(function ($record) {
                                     $service = app(\VEximweb\Plugin\DnsTools\Services\SpfRecordService::class);
-                                    $service->checkDomain($record->domain);
+                                    $service->checkDomain($record->domain, true);
                                     
                                     Notification::make()
                                         ->title('SPF check completed')
