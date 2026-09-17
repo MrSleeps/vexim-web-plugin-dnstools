@@ -23,7 +23,8 @@
         "cbowofrivia/dmarc-record-builder": "^4.0",
         "mlocati/spf-lib": "^3.3",
         "mlocati/ip-lib": "^1.22",
-        "phpseclib/phpseclib": "^3.0"
+        "phpseclib/phpseclib": "^3.0",
+        "mikepultz/netdns2": "^2.0.8"
     },
     "autoload": {
         "psr-4": {
@@ -38,7 +39,7 @@
         },
         "branch-alias": {
             "dev-main": "1.x-dev"
-        }        
+        }
     },
     "minimum-stability": "stable",
     "prefer-stable": true,
