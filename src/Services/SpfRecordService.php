@@ -832,11 +832,11 @@ class SpfRecordService
     /**
      * Get the domain from a mechanism using the proper methods
      *
-     * @param Mechanism $mechanism
+     * @param Mechanism|Modifier $mechanism
      * @param string $termString
      * @return string
      */
-    protected function getDomainFromMechanism(Mechanism $mechanism, string $termString): string
+    protected function getDomainFromMechanism(Mechanism|Modifier $mechanism, string $termString): string
     {
         // Check if the mechanism implements TermWithDomainSpec
         if ($mechanism instanceof \SPFLib\Term\TermWithDomainSpec) {
