@@ -284,7 +284,7 @@ class MtaStsService
     protected function getDnsCnameRecord(string $domain): ?array
     {
         try {
-            $result = dns_get_record($domain, DNS_CNAME);
+            $result = app(DnsResolverService::class)->cname($domain);
             
             if ($result === false || empty($result)) {
                 Log::debug('No CNAME record found', ['domain' => $domain]);
@@ -380,7 +380,7 @@ class MtaStsService
         $records = [];
         
         try {
-            $result = dns_get_record($domain, DNS_TXT);
+            $result = app(DnsResolverService::class)->txt($domain);
             
             if ($result === false) {
                 Log::warning("Failed to get TXT records for {$domain}");
@@ -410,7 +410,7 @@ class MtaStsService
         $records = [];
         
         try {
-            $result = dns_get_record($domain, DNS_MX);
+            $result = app(DnsResolverService::class)->mx($domain);
             
             if ($result === false) {
                 Log::warning("Failed to get MX records for {$domain}");
