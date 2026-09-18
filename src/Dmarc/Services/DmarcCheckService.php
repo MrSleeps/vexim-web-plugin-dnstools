@@ -67,7 +67,7 @@ class DmarcCheckService
                 
                 // Query DNS for DMARC record
                 $dnsStart = microtime(true);
-                $records = app(\\VEximweb\\Plugin\\DnsTools\\Services\\DnsResolverService::class)->txt("_dmarc.{$domain}");
+                $records = app(\VEximweb\Plugin\DnsTools\Services\DnsResolverService::class)->txt("_dmarc.{$domain}");
                 $dnsDuration = microtime(true) - $dnsStart;
                 
                 // Restore original settings
