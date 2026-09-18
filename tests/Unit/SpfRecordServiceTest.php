@@ -1,5 +1,6 @@
 <?php
 
+use VEximweb\Plugin\DnsTools\Services\DirectDnsResolver;
 use VEximweb\Plugin\DnsTools\Services\SpfRecordService;
 
 function spfParserForTest(): SpfRecordService
@@ -36,4 +37,48 @@ it('still rejects fatal semantic errors', function () {
     $result = spfParserForTest()->parseForTest('v=spf1 redirect=_spf.example.net redirect=_spf2.example.net');
 
     expect($result['valid'])->toBeFalse();
+});
+
+
+function spfDnsLookupForTest(array $txtRecords): SpfRecordService
+{
+    $resolver = new class($txtRecords) extends DirectDnsResolver
+    {
+        public function __construct(private array $txtRecords)
+        {
+        }
+
+        public function txt(string $domain): array
+        {
+            return $this->txtRecords;
+        }
+    };
+
+    return new class($resolver) extends SpfRecordService
+    {
+        public function lookupForTest(string $domain = 'example.com'): ?string
+        {
+            return $this->getDnsSpfRecord($domain);
+        }
+    };
+}
+
+it('reads SPF from the direct DNS resolver instead of the system resolver', function () {
+    $service = spfDnsLookupForTest([
+        'google-site-verification=abc123',
+        'v=spf1 mx -all',
+    ]);
+
+    expect($service->lookupForTest('mail.example.com'))
+        ->toBe('v=spf1 mx -all');
+});
+
+it('still rejects multiple SPF records returned by direct DNS', function () {
+    $service = spfDnsLookupForTest([
+        'v=spf1 mx -all',
+        'V=SPF1 ip4:192.0.2.10 -all',
+    ]);
+
+    expect(fn () => $service->lookupForTest())
+        ->toThrow(RuntimeException::class, 'Multiple SPF records found for domain');
 });
